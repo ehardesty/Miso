@@ -54,7 +54,7 @@ struct DPIRow: View {
                 .accessibilityValue("\(value) DPI")
                 Text("\(value) DPI")
                     .monospacedDigit()
-                    .frame(width: 76, alignment: .trailing)
+                    .frame(width: SettingsLayout.valueWidth, alignment: .trailing)
                     .accessibilityHidden(true)
             }
         }

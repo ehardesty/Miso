@@ -41,7 +41,6 @@ struct SpeedSlider: View {
     @Binding var speed: Double
     var valueText: (Double) -> String = \.multiplierText
     var accessibilityText: ((Double) -> String)?
-    var valueWidth: CGFloat = 48
     var stepsPerUnit = 100.0
 
     var body: some View {
@@ -64,7 +63,7 @@ struct SpeedSlider: View {
                     .accessibilityHidden(true)
                 Text(valueText(speed))
                     .monospacedDigit()
-                    .frame(width: valueWidth, alignment: .trailing)
+                    .frame(width: SettingsLayout.valueWidth, alignment: .trailing)
                     .accessibilityHidden(true)
             }
         }
@@ -96,7 +95,7 @@ private struct PointerBoostControl: View {
                     .accessibilityValue(boostText)
                 Text(boostText)
                     .monospacedDigit()
-                    .frame(width: 48, alignment: .trailing)
+                    .frame(width: SettingsLayout.valueWidth, alignment: .trailing)
                     .accessibilityHidden(true)
             }
         }

@@ -59,7 +59,7 @@ struct ButtonsPane: View {
                 .accessibilityValue("\(Int(distance.wrappedValue)) points")
                 Text("\(Int(distance.wrappedValue)) pt")
                     .monospacedDigit()
-                    .frame(width: 48, alignment: .trailing)
+                    .frame(width: SettingsLayout.valueWidth, alignment: .trailing)
                     .accessibilityHidden(true)
             }
         }

@@ -18,16 +18,6 @@ struct WheelAxisControls: View {
             }
             .pickerStyle(.segmented)
         }
-        if modes.contains(.boost) {
-            ProfileControl(
-                model: model, scope: scope, field: axis.appending(path: \.boost),
-                overrideField: overrides.appending(path: \.boost), overrideTitle: "Override Fast-Scroll Boost"
-            ) { WheelBoostControl(boost: $0) }
-            ProfileControl(
-                model: model, scope: scope, field: axis.appending(path: \.wheelRamp),
-                overrideField: overrides.appending(path: \.wheelRamp), overrideTitle: "Override Wheel Ramp"
-            ) { WheelRampControl(ramp: $0) }
-        }
         ForEach(modes) { mode in
             let title = mode == .system && modes.count > 1 ? "macOS speed" : mode.wheelSpeedTitle
             ProfileControl(
@@ -41,14 +31,20 @@ struct WheelAxisControls: View {
                     SpeedSlider(
                         title: title, speed: speed, valueText: \.linesText,
                         accessibilityText: { "\($0.linesText) per wheel step" },
-                        valueWidth: 72, stepsPerUnit: 20
+                        stepsPerUnit: 20
                     )
                 }
             }
         }
         if modes.contains(.boost) {
-            // A fresh live test per scope, so a reading never carries over to another curve.
-            WheelCurvePanel(model: model, scope: scope, axis: axis).id(scope)
+            ProfileControl(
+                model: model, scope: scope, field: axis.appending(path: \.boost),
+                overrideField: overrides.appending(path: \.boost), overrideTitle: "Override Fast-Scroll Boost"
+            ) { WheelBoostControl(boost: $0) }
+            ProfileControl(
+                model: model, scope: scope, field: axis.appending(path: \.wheelRamp),
+                overrideField: overrides.appending(path: \.wheelRamp), overrideTitle: "Override Wheel Ramp"
+            ) { WheelRampControl(ramp: $0) }
         }
     }
 }
@@ -64,7 +60,7 @@ private struct WheelBoostControl: View {
                     .accessibilityValue(capText)
                 Text(capText)
                     .monospacedDigit()
-                    .frame(width: 80, alignment: .trailing)
+                    .frame(width: SettingsLayout.valueWidth, alignment: .trailing)
                     .help("+\(Int((amount * 100).rounded()))%")
                     .accessibilityHidden(true)
             }

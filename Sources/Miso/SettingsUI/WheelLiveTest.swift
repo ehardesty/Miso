@@ -85,26 +85,19 @@ struct WheelTestTarget: View {
     @ObservedObject var model: SettingsModel
     @ObservedObject var live: WheelLiveTest
     let axis: QuartzWheelAxis
-    let result: WheelLiveResult
     @State private var hovering = false
     private var armed: Bool { hovering && activeState == .key }
 
     var body: some View {
-        switch result {
-        case let .unavailable(reason):
-            note(reason, symbol: "info.circle")
-        default:
-            target
-                .onHover { hovering = $0 }
-                .onChange(of: armed) { _, armed in
-                    if armed { live.start(axis, model: model) } else { live.stop(model) }
-                }
-                .onDisappear {
-                    hovering = false
-                    live.stop(model)
-                }
-            if case let .message(text) = result { note(text, symbol: "exclamationmark.circle") }
-        }
+        target
+            .onHover { hovering = $0 }
+            .onChange(of: armed) { _, armed in
+                if armed { live.start(axis, model: model) } else { live.stop(model) }
+            }
+            .onDisappear {
+                hovering = false
+                live.stop(model)
+            }
     }
 
     private var target: some View {
@@ -150,12 +143,5 @@ struct WheelTestTarget: View {
             .frame(width: axis == .vertical ? nil : 44, height: axis == .vertical ? 18 : 44,
                    alignment: axis == .vertical ? .leading : .center)
             .padding(.horizontal, 10)
-    }
-
-    private func note(_ text: String, symbol: String) -> some View {
-        Label(text, systemImage: symbol)
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
     }
 }

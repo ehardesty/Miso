@@ -13,48 +13,30 @@ struct WheelCurvePanel: View {
     var body: some View {
         let curve = curve
         let result = curve.mode == .boost ? liveResult(curve) : .waiting
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Custom wheel response").font(.headline)
-                Spacer()
-                if case .app = scope, !model.devices.isEmpty {
-                    Picker("Preview with", selection: previewSelection) {
-                        ForEach(model.devices) { Text($0.name).tag($0.id) }
-                    }
-                    .fixedSize()
-                    .help("App settings combine with each mouse's own settings")
-                }
-            }
+        Section {
             if curve.mode == .boost {
-                Text("Scroll distance · lines per wheel step")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                WheelCurveChart(curve: curve, inspectedRate: inspectedRate, liveRate: result.rates?.last,
-                                peakRate: result.rates?.peak, liveIdle: live.idle || result.rates?.preview == true)
-                capKey(curve)
-                HStack(alignment: .top, spacing: 16) {
-                    inspector(curve).frame(maxWidth: .infinity, alignment: .topLeading)
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Scroll to test").font(.subheadline.weight(.semibold))
-                        WheelTestTarget(model: model, live: live, axis: probeAxis, result: result)
-                        if let rates = result.rates {
-                            if rates.preview {
-                                Text("Preview at the last measured speeds. Scroll again to test.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            readings(curve, last: rates.last, peak: rates.peak)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
+                chartRow(curve, result)
+                inspector(curve)
+                liveTestRow(curve, result)
             } else {
                 Text("\(deviceName) doesn't use Custom for this wheel in \(model.title(for: scope)).")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+        } header: {
+            HStack(alignment: .firstTextBaseline) {
+                Text(probeAxis == .vertical ? "Vertical Wheel Response" : "Horizontal Wheel Response")
+                Spacer()
+                if case .app = scope, !model.devices.isEmpty {
+                    Picker("Preview with", selection: previewSelection) {
+                        ForEach(model.devices) { Text($0.name).tag($0.id) }
+                    }
+                    .font(.callout)
+                    .fixedSize()
+                    .help("App settings combine with each mouse's own settings")
+                }
+            }
         }
-        .padding(.vertical, 4)
         .onChange(of: curve) { live.clearMessage() }
         .onChange(of: model.devices) { live.clearMessage() }
     }
@@ -87,14 +69,40 @@ struct WheelCurvePanel: View {
 
     private var deviceName: String { device.map { model.title(for: .device($0)) } ?? "This mouse" }
 
+    private func chartRow(_ curve: AxisSettings, _ result: WheelLiveResult) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    chartTitle
+                    Spacer(minLength: 16)
+                    capKey(curve)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    chartTitle
+                    capKey(curve)
+                }
+            }
+            WheelCurveChart(curve: curve, inspectedRate: inspectedRate, liveRate: result.rates?.last,
+                            peakRate: result.rates?.peak, liveIdle: live.idle || result.rates?.preview == true)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var chartTitle: some View {
+        Text("Scroll distance · lines per wheel step")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
     private func capKey(_ curve: AxisSettings) -> some View {
         let ramp = curve.wheelRamp
-        return HStack(spacing: 18) {
+        return HStack(spacing: 14) {
             keyItem("Boost starts", ramp.startRate.wheelRateText)
             keyItem("Full boost", ramp.fullRate.wheelRateText)
             keyItem("Max boost", curve.wheelBoost(atRate: Double(ramp.fullRate)).multiplierText)
         }
         .font(.caption)
+        .fixedSize()
     }
 
     private func keyItem(_ title: String, _ value: String) -> some View {
@@ -106,19 +114,18 @@ struct WheelCurvePanel: View {
     }
 
     private func inspector(_ curve: AxisSettings) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             LabeledContent("Inspect rate") {
                 Text(Int(inspectedRate).wheelRateText).monospacedDigit()
             }
-            .font(.subheadline.weight(.semibold))
-            Slider(value: Binding(get: { inspectedRate }, set: { inspectedRate = $0.rounded() }),
-                   in: 0...Double(WheelRamp.rateRange.upperBound)) {
-                Text("Inspect rate")
-            }
-            .labelsHidden()
-            .tint(WheelCurveChart.signal)
-            .accessibilityValue(Int(inspectedRate).spokenWheelRate)
-            HStack(alignment: .top, spacing: 18) {
+            HStack(spacing: 16) {
+                Slider(value: Binding(get: { inspectedRate }, set: { inspectedRate = $0.rounded() }),
+                       in: 0...Double(WheelRamp.rateRange.upperBound)) {
+                    Text("Inspect rate")
+                }
+                .labelsHidden()
+                .tint(WheelCurveChart.signal)
+                .accessibilityValue(Int(inspectedRate).spokenWheelRate)
                 figure(curve.wheelLinesPerStep(atRate: inspectedRate).decimalText, "Lines per step")
                 figure(curve.wheelBoost(atRate: inspectedRate).multiplierText, "Multiplier")
             }
@@ -127,13 +134,51 @@ struct WheelCurvePanel: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.vertical, 2)
+    }
+
+    private func liveTestRow(_ curve: AxisSettings, _ result: WheelLiveResult) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Scroll to test")
+                switch result {
+                case let .unavailable(reason): note(reason, symbol: "info.circle")
+                case let .message(text): note(text, symbol: "exclamationmark.circle")
+                case .waiting, .reading: EmptyView()
+                }
+                if let rates = result.rates {
+                    if rates.preview {
+                        Text("Preview at the last measured speeds. Scroll again to test.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    readings(curve, last: rates.last, peak: rates.peak)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if case .unavailable = result {} else {
+                WheelTestTarget(model: model, live: live, axis: probeAxis)
+                    .frame(minWidth: 156, maxWidth: probeAxis == .vertical ? 200 : 260)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func note(_ text: String, symbol: String) -> some View {
+        Label(text, systemImage: symbol)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func figure(_ value: String, _ title: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(value).font(.title3.weight(.semibold)).monospacedDigit()
-            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(title).font(.caption).foregroundStyle(.secondary).fixedSize()
         }
+        // Fixed width keeps the slider from resizing while its value changes.
+        .frame(width: 84, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
 
@@ -151,6 +196,7 @@ struct WheelCurvePanel: View {
             if let peak { readingRow("Peak", curve, peak) }
         }
         .monospacedDigit()
+        .fixedSize(horizontal: true, vertical: false)
         .opacity(live.idle ? 0.7 : 1)
     }
 

@@ -54,13 +54,15 @@ private struct RateRow: View {
                 Slider(value: sliderValue, in: range) { Text(title) }
                     .labelsHidden()
                     .accessibilityValue(spokenText)
-                Text(rate.wheelRateText)
-                    .monospacedDigit()
-                    .frame(width: 80, alignment: .trailing)
-                    .accessibilityHidden(true)
-                Stepper(title, value: $rate, in: stepperRange)
-                    .labelsHidden()
-                    .accessibilityValue(spokenText)
+                HStack(spacing: 4) {
+                    Text(rate.wheelRateText)
+                        .monospacedDigit()
+                        .accessibilityHidden(true)
+                    Stepper(title, value: $rate, in: stepperRange)
+                        .labelsHidden()
+                        .accessibilityValue(spokenText)
+                }
+                .frame(width: SettingsLayout.valueWidth, alignment: .trailing)
             }
         }
     }

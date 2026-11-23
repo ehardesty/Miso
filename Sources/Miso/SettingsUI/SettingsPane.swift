@@ -1,3 +1,5 @@
+import SwiftUI
+
 enum SettingsPane: String, CaseIterable, Identifiable {
     case status, pointer, scrolling, buttons
 
@@ -22,4 +24,9 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     }
 
     var usesScope: Bool { self != .status }
+}
+
+enum SettingsLayout {
+    /// Width of the value after a slider, so slider ends line up down a pane.
+    static let valueWidth: CGFloat = 92
 }

@@ -1,3 +1,4 @@
+import AppKit
 import Charts
 import MisoCore
 import SwiftUI
@@ -11,7 +12,12 @@ struct WheelCurveChart: View {
     var peakRate: Double?
     var liveIdle = true
 
-    static let signal = Color(red: 0, green: 0.494, blue: 0.471)
+    /// Teal from the approved preview, lifted in Dark Mode so the line keeps its contrast.
+    static let signal = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.19, green: 0.71, blue: 0.67, alpha: 1)
+            : NSColor(srgbRed: 0, green: 0.494, blue: 0.471, alpha: 1)
+    })
     private static let rates = Array(WheelRamp.rateRange)
     private static let ceilings = [1.0, 2, 4, 8, 12, 20, 40]
 
@@ -66,7 +72,7 @@ struct WheelCurveChart: View {
         }
         .chartXAxisLabel("Estimated wheel rate · steps/s", position: .bottom, alignment: .center)
         .frame(height: 200)
-        .padding(.top, 14)
+        .padding(.top, 20)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(summary)
     }
@@ -82,7 +88,8 @@ struct WheelCurveChart: View {
         RuleMark(x: .value("Steps/s", rate))
             .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
             .foregroundStyle(Color.secondary.opacity(0.7))
-            .annotation(position: position, spacing: 2, overflowResolution: .init(x: .fit(to: .plot))) {
+            // Spacing lifts the label clear of the top y-axis value.
+            .annotation(position: position, spacing: 9, overflowResolution: .init(x: .fit(to: .plot))) {
                 Text("\(title) \(rate)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
