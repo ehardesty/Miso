@@ -1,7 +1,6 @@
 import MisoCore
 import SwiftUI
 
-/// Speed and acceleration rows shared by the pointer and both wheel axes.
 struct AxisControls: View {
     @ObservedObject var model: SettingsModel
     let scope: SettingsScope
@@ -9,14 +8,30 @@ struct AxisControls: View {
     let overrides: WritableKeyPath<ProfileOverrides, ProfileOverrides.Axis>
 
     var body: some View {
+        let modes = model.modes(for: scope, axis: axis)
         ProfileControl(
-            model: model, scope: scope, field: axis.appending(path: \.speed),
-            overrideField: overrides.appending(path: \.speed), overrideTitle: "Override Speed"
-        ) { SpeedSlider(title: "Speed", speed: $0) }
-        ProfileControl(
-            model: model, scope: scope, field: axis.appending(path: \.acceleration),
-            overrideField: overrides.appending(path: \.acceleration), overrideTitle: "Override Acceleration"
-        ) { AccelerationControl(acceleration: $0) }
+            model: model, scope: scope, field: axis.appending(path: \.mode),
+            overrideField: overrides.appending(path: \.mode), overrideTitle: "Override Acceleration"
+        ) { mode in
+            Picker("Acceleration", selection: mode) {
+                ForEach(AccelerationMode.allCases) { Text($0.pointerTitle).tag($0) }
+            }
+            .pickerStyle(.segmented)
+        }
+        ForEach(modes) { mode in
+            let title = modes.count > 1 ? "\(mode.pointerTitle) speed" : "Speed"
+            ProfileControl(
+                model: model, scope: scope, field: axis.appending(path: AxisSettings.speedField(for: mode)),
+                overrideField: overrides.appending(path: ProfileOverrides.Axis.speedField(for: mode)),
+                overrideTitle: "Override \(title)"
+            ) { SpeedSlider(title: title, speed: $0) }
+        }
+        if modes.contains(.boost) {
+            ProfileControl(
+                model: model, scope: scope, field: axis.appending(path: \.boost),
+                overrideField: overrides.appending(path: \.boost), overrideTitle: "Override Boost"
+            ) { PointerBoostControl(amount: $0) }
+        }
     }
 }
 
@@ -70,64 +85,36 @@ struct SpeedSlider: View {
     }
 }
 
-struct AccelerationControl: View {
-    @Binding var acceleration: Double
+private struct PointerBoostControl: View {
+    @Binding var amount: Double
 
     var body: some View {
-        Picker("Acceleration", selection: mode) {
-            ForEach(AccelerationMode.allCases) { mode in
-                Text(mode.title).tag(mode)
-            }
-        }
-        .pickerStyle(.segmented)
-        if AccelerationMode(acceleration) == .boost {
-            LabeledContent("Boost") {
-                HStack(spacing: 10) {
-                    Slider(value: boost, in: 0.1...2) { Text("Boost") }
-                        .labelsHidden()
-                        .accessibilityValue(boostText)
-                    Text(boostText)
-                        .monospacedDigit()
-                        .frame(width: 48, alignment: .trailing)
-                        .accessibilityHidden(true)
-                }
+        LabeledContent("Boost") {
+            HStack(spacing: 10) {
+                Slider(value: boost, in: 0.1...2) { Text("Boost") }
+                    .labelsHidden()
+                    .accessibilityValue(boostText)
+                Text(boostText)
+                    .monospacedDigit()
+                    .frame(width: 48, alignment: .trailing)
+                    .accessibilityHidden(true)
             }
         }
     }
 
-    private var boostText: String { "+\(Int((acceleration * 100).rounded()))%" }
-
-    private var mode: Binding<AccelerationMode> {
-        Binding(get: { AccelerationMode(acceleration) }, set: { acceleration = $0.defaultValue })
-    }
+    private var boostText: String { "+\(Int((boost.wrappedValue * 100).rounded()))%" }
 
     private var boost: Binding<Double> {
-        Binding(get: { min(max(acceleration, 0.1), 2) }, set: { acceleration = ($0 * 20).rounded() / 20 })
+        Binding(get: { min(max(amount, 0.1), 2) }, set: { amount = ($0 * 20).rounded() / 20 })
     }
 }
 
-enum AccelerationMode: CaseIterable, Identifiable {
-    case linear, system, boost
-
-    init(_ value: Double) {
-        self = value < 0 ? .linear : value == 0 ? .system : .boost
-    }
-
-    var id: Self { self }
-
-    var title: String {
+private extension AccelerationMode {
+    var pointerTitle: String {
         switch self {
         case .linear: "Off"
         case .system: "macOS"
         case .boost: "Boost"
-        }
-    }
-
-    var defaultValue: Double {
-        switch self {
-        case .linear: -1
-        case .system: 0
-        case .boost: 0.5
         }
     }
 }

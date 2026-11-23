@@ -4,13 +4,27 @@ import Foundation
 /// fields preserves later global changes in unrelated settings.
 public struct ProfileOverrides: Codable, Equatable, Sendable {
     public struct Axis: Codable, Equatable, Sendable {
-        public var speed: Double?
-        public var acceleration: Double?
+        public var mode: AccelerationMode?
+        public var linearSpeed: Double?
+        public var systemSpeed: Double?
+        public var boostSpeed: Double?
+        public var boost: Double?
         public var wheelRamp: WheelRamp?
 
+        public static func speedField(for mode: AccelerationMode) -> WritableKeyPath<Self, Double?> {
+            switch mode {
+            case .linear: \.linearSpeed
+            case .system: \.systemSpeed
+            case .boost: \.boostSpeed
+            }
+        }
+
         func apply(to axis: inout AxisSettings) {
-            if let speed { axis.speed = speed }
-            if let acceleration { axis.acceleration = acceleration }
+            if let mode { axis.mode = mode }
+            if let linearSpeed { axis.linearSpeed = linearSpeed }
+            if let systemSpeed { axis.systemSpeed = systemSpeed }
+            if let boostSpeed { axis.boostSpeed = boostSpeed }
+            if let boost { axis.boost = boost }
             if let wheelRamp { axis.wheelRamp = wheelRamp }
         }
     }
@@ -49,13 +63,5 @@ public struct ProfileOverrides: Codable, Equatable, Sendable {
             profile.mappings.removeAll { triggers.contains($0.trigger) }
             profile.mappings.append(contentsOf: configured)
         }
-    }
-
-    mutating func migrateAppMappings(inheriting inherited: [ButtonMapping]) {
-        guard let mappings else { return }
-        // Old app profiles saved a snapshot of every row shown in the editor.
-        // Keep changed rows and let omitted rows and copies inherit again.
-        appButtonMappings = mappings.filter { !inherited.contains($0) }
-        self.mappings = nil
     }
 }

@@ -20,7 +20,7 @@ import Testing
 
 @Test func linearWheelUsesThePhysicalBurstAndPreservesDirection() {
     var axis = WheelAxis()
-    let linear = AxisSettings(speed: 2, acceleration: -1)
+    let linear = AxisSettings(mode: .linear, speed: 2)
     let accelerated = WheelDelta(lines: -6, fixed: -6.5, points: -76)
     let output = axis.transform(
         accelerated, settings: linear, reversed: false, continuous: false,
@@ -39,7 +39,7 @@ import Testing
     var axis = WheelAxis()
     let notch = WheelDelta(lines: 1, fixed: 1, points: 10)
     let output = axis.transform(
-        notch, settings: AxisSettings(speed: 0.25, acceleration: -1),
+        notch, settings: AxisSettings(mode: .linear, speed: 0.25),
         reversed: false, continuous: false, timestamp: 1, rawUnits: 1
     )
 
@@ -51,7 +51,7 @@ func customWheelStartsAtTheSetDistanceAndBoundsTheFastMultiplier(
     savedBoost: Double, expectedMultiplier: Double
 ) {
     var axis = WheelAxis()
-    let custom = AxisSettings(speed: 2, acceleration: savedBoost)
+    let custom = AxisSettings(mode: .boost, speed: 2, boost: savedBoost)
     let slow = WheelDelta(lines: 1, fixed: 0.1, points: 1)
     let fast = WheelDelta(lines: 12, fixed: 12.1, points: 121)
     let opposite = WheelDelta(lines: -2, fixed: -2, points: -20)
@@ -76,11 +76,11 @@ func customWheelStartsAtTheSetDistanceAndBoundsTheFastMultiplier(
 
 @Test func customWheelScalesNativeDeltasWhenStepsAreUnavailable() {
     var axis = WheelAxis()
-    let custom = AxisSettings(speed: 1, acceleration: 2)
+    let custom = AxisSettings(mode: .boost, boost: 2)
     let precise = WheelDelta(lines: 0, fixed: 0.3, points: 3)
     #expect(axis.transform(precise, settings: custom, reversed: false, continuous: false,
                            timestamp: 1, rawUnits: 0) == precise)
-    let faster = AxisSettings(speed: 2, acceleration: 2)
+    let faster = AxisSettings(mode: .boost, speed: 2, boost: 2)
     let notch = WheelDelta(lines: 1, fixed: 0.1, points: 1)
     #expect(axis.transform(notch, settings: faster, reversed: false, continuous: false,
                            timestamp: 2) == WheelDelta(lines: 2, fixed: 0.2, points: 2))
@@ -92,7 +92,7 @@ func customWheelStartsAtTheSetDistanceAndBoundsTheFastMultiplier(
 func customRampUsesTheSelectedThresholdsAndShape(curve: WheelRamp.Curve, intermediatePoints: Double) {
     var axis = WheelAxis()
     let settings = AxisSettings(
-        acceleration: 8, wheelRamp: WheelRamp(startRate: 30, fullRate: 35, curve: curve)
+        mode: .boost, boost: 8, wheelRamp: WheelRamp(startRate: 30, fullRate: 35, curve: curve)
     )
     let notch = WheelDelta(lines: 1, fixed: 0.1, points: 1)
     func scroll(at milliseconds: UInt64) -> Double {
@@ -108,7 +108,7 @@ func customRampUsesTheSelectedThresholdsAndShape(curve: WheelRamp.Curve, interme
 
 @Test func customWheelAccumulatesSubLineStepsForLineOnlyApps() {
     var axis = WheelAxis()
-    let custom = AxisSettings(speed: 0.25, acceleration: 0.5)
+    let custom = AxisSettings(mode: .boost, speed: 0.25)
     let notch = WheelDelta(lines: 1, fixed: 0.1, points: 1)
     let output = (1...4).map {
         axis.transform(notch, settings: custom, reversed: false, continuous: false,

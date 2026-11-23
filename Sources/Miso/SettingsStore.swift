@@ -2,9 +2,9 @@ import Foundation
 import MisoCore
 
 enum SettingsStore {
-    // Keep the existing preferences and HID++ recovery records across the rename.
-    private static let key = "MouseTweaks.Settings.v1"
+    private static let key = "Miso.Settings"
 
+    // Keep recovery records from earlier builds available for restoring Logitech controls.
     static var supportDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MouseTweaks", isDirectory: true)

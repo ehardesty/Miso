@@ -171,7 +171,7 @@ final class PointerSettings {
         var unavailable: [String] = []
         for device in devices {
             let value = settings.enabled
-                ? settings.profile(device: deviceIDs[device.sender] ?? device.model.id, app: app).pointer
+                ? settings.profile(device: deviceIDs[device.sender] ?? device.model.id, app: app).pointer.activePointer
                 : AxisSettings()
             if value == AxisSettings() {
                 if var owner = owners[device.sender] {

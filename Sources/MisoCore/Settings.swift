@@ -8,21 +8,6 @@ public struct Settings: Codable, Equatable, Sendable {
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey {
-        case enabled, global, deviceProfiles, appProfiles
-    }
-
-    public init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        enabled = try values.decode(Bool.self, forKey: .enabled)
-        global = try values.decode(InputProfile.self, forKey: .global)
-        deviceProfiles = try values.decode([String: ProfileOverrides].self, forKey: .deviceProfiles)
-        appProfiles = try values.decode([String: ProfileOverrides].self, forKey: .appProfiles)
-        for id in appProfiles.keys {
-            appProfiles[id]?.migrateAppMappings(inheriting: global.mappings)
-        }
-    }
-
     public func profile(device: String?, app: String?) -> InputProfile {
         var result = global
         if let device { deviceProfiles[device]?.apply(to: &result) }
@@ -52,28 +37,57 @@ public struct InputProfile: Codable, Equatable, Sendable {
     }
 }
 
+public enum AccelerationMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case linear, system, boost
+
+    public var id: Self { self }
+}
+
 public struct AxisSettings: Codable, Equatable, Sendable {
     public static let wheelBoostRange = 1.0...9.0
 
-    public var speed: Double
-    public var acceleration: Double
-    public var wheelRamp: WheelRamp
+    public var mode = AccelerationMode.system
+    public var linearSpeed = 1.0
+    public var systemSpeed = 1.0
+    public var boostSpeed = 1.0
+    public var boost = 0.5
+    public var wheelRamp = WheelRamp()
 
-    public init(speed: Double = 1, acceleration: Double = 0, wheelRamp: WheelRamp = WheelRamp()) {
-        self.speed = speed
-        self.acceleration = acceleration
+    public init(mode: AccelerationMode = .system, speed: Double = 1, boost: Double = 0.5,
+                wheelRamp: WheelRamp = WheelRamp()) {
+        self.mode = mode
+        self[keyPath: Self.speedField(for: mode)] = speed
+        self.boost = boost
         self.wheelRamp = wheelRamp
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case speed, acceleration, wheelRamp
+    public static func speedField(for mode: AccelerationMode) -> WritableKeyPath<Self, Double> {
+        switch mode {
+        case .linear: \.linearSpeed
+        case .system: \.systemSpeed
+        case .boost: \.boostSpeed
+        }
     }
 
-    public init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        speed = try values.decode(Double.self, forKey: .speed)
-        acceleration = try values.decode(Double.self, forKey: .acceleration)
-        wheelRamp = try values.decodeIfPresent(WheelRamp.self, forKey: .wheelRamp) ?? WheelRamp()
+    public var speed: Double {
+        switch mode {
+        case .linear: linearSpeed
+        case .system: systemSpeed
+        case .boost: boostSpeed
+        }
+    }
+
+    public var acceleration: Double {
+        switch mode {
+        case .linear: -1
+        case .system: 0
+        case .boost: boost
+        }
+    }
+
+    /// Resolve only the fields the native pointer settings can apply.
+    public var activePointer: AxisSettings {
+        AxisSettings(mode: mode, speed: speed, boost: mode == .boost ? accelerationAmount : 0.5)
     }
 
     public var changesWheel: Bool { speed != 1 || acceleration != 0 }
