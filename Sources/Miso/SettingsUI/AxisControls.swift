@@ -24,6 +24,10 @@ struct AxisControls: View {
 struct SpeedSlider: View {
     let title: String
     @Binding var speed: Double
+    var valueText: (Double) -> String = \.multiplierText
+    var accessibilityText: ((Double) -> String)?
+    var valueWidth: CGFloat = 48
+    var stepsPerUnit = 100.0
 
     var body: some View {
         LabeledContent(title) {
@@ -39,18 +43,18 @@ struct SpeedSlider: View {
                     EmptyView()
                 }
                 .labelsHidden()
-                .accessibilityValue(speed.multiplierText)
+                .accessibilityValue((accessibilityText ?? valueText)(speed))
                 Image(systemName: "hare")
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                Text(speed.multiplierText)
+                Text(valueText(speed))
                     .monospacedDigit()
-                    .frame(width: 48, alignment: .trailing)
+                    .frame(width: valueWidth, alignment: .trailing)
                     .accessibilityHidden(true)
             }
         }
         .contextMenu {
-            Button("Reset to 1×") { speed = 1 }
+            Button("Reset to \(valueText(1))") { speed = 1 }
         }
     }
 
@@ -60,7 +64,7 @@ struct SpeedSlider: View {
             set: { value in
                 // Snap near 1× so the default is easy to return to.
                 let snapped = abs(value) < 0.06 ? 0 : value
-                speed = (pow(2, snapped) * 100).rounded() / 100
+                speed = (pow(2, snapped) * stepsPerUnit).rounded() / stepsPerUnit
             }
         )
     }

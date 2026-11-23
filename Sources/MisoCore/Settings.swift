@@ -43,7 +43,7 @@ public struct InputProfile: Codable, Equatable, Sendable {
     public init() {}
 
     public var changesWheel: Bool {
-        verticalWheel != AxisSettings() || horizontalWheel != AxisSettings()
+        verticalWheel.changesWheel || horizontalWheel.changesWheel
             || reverseVertical || reverseHorizontal
     }
 
@@ -53,16 +53,38 @@ public struct InputProfile: Codable, Equatable, Sendable {
 }
 
 public struct AxisSettings: Codable, Equatable, Sendable {
+    public static let wheelBoostRange = 1.0...9.0
+
     public var speed: Double
     public var acceleration: Double
+    public var wheelRamp: WheelRamp
 
-    public init(speed: Double = 1, acceleration: Double = 0) {
+    public init(speed: Double = 1, acceleration: Double = 0, wheelRamp: WheelRamp = WheelRamp()) {
         self.speed = speed
         self.acceleration = acceleration
+        self.wheelRamp = wheelRamp
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case speed, acceleration, wheelRamp
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        speed = try values.decode(Double.self, forKey: .speed)
+        acceleration = try values.decode(Double.self, forKey: .acceleration)
+        wheelRamp = try values.decodeIfPresent(WheelRamp.self, forKey: .wheelRamp) ?? WheelRamp()
+    }
+
+    public var changesWheel: Bool { speed != 1 || acceleration != 0 }
 
     public var speedMultiplier: Double { speed.isFinite ? min(4, max(0.25, speed)) : 1 }
     public var accelerationAmount: Double { acceleration.isFinite ? min(2, max(-1, acceleration)) : 0 }
+    public var wheelAccelerationAmount: Double {
+        guard acceleration.isFinite else { return 0 }
+        guard acceleration > 0 else { return max(-1, acceleration) }
+        return min(Self.wheelBoostRange.upperBound, max(Self.wheelBoostRange.lowerBound, acceleration))
+    }
 }
 
 public enum MouseButton: Codable, Equatable, Hashable, Sendable {

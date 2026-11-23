@@ -6,10 +6,12 @@ public struct ProfileOverrides: Codable, Equatable, Sendable {
     public struct Axis: Codable, Equatable, Sendable {
         public var speed: Double?
         public var acceleration: Double?
+        public var wheelRamp: WheelRamp?
 
         func apply(to axis: inout AxisSettings) {
             if let speed { axis.speed = speed }
             if let acceleration { axis.acceleration = acceleration }
+            if let wheelRamp { axis.wheelRamp = wheelRamp }
         }
     }
 

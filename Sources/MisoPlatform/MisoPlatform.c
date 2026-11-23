@@ -4,6 +4,7 @@
 #include <IOKit/hidsystem/IOHIDServiceClient.h>
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
+#include <mach/mach_time.h>
 
 enum { MTHIDClientPassive = 2 };
 extern IOHIDEventSystemClientRef IOHIDEventSystemClientCreateWithType(
@@ -14,11 +15,14 @@ typedef CFTypeRef (*CopyHIDEvent)(CGEventRef);
 typedef uint64_t (*GetSender)(CFTypeRef);
 typedef uint32_t (*GetEventType)(CFTypeRef);
 typedef double (*GetEventFloat)(CFTypeRef, uint32_t);
+typedef uint64_t (*GetHIDTimestamp)(CFTypeRef);
 
 static CopyHIDEvent copyHIDEvent;
 static GetSender getSender;
 static GetEventType getEventType;
 static GetEventFloat getEventFloat;
+static GetHIDTimestamp getHIDTimestamp;
+static double nanosPerTick;
 
 static void resolveSymbols(void *context) {
     (void)context;
@@ -26,6 +30,11 @@ static void resolveSymbols(void *context) {
     getSender = (GetSender)dlsym(RTLD_DEFAULT, "IOHIDEventGetSenderID");
     getEventType = (GetEventType)dlsym(RTLD_DEFAULT, "IOHIDEventGetType");
     getEventFloat = (GetEventFloat)dlsym(RTLD_DEFAULT, "IOHIDEventGetFloatValue");
+    getHIDTimestamp = (GetHIDTimestamp)dlsym(RTLD_DEFAULT, "IOHIDEventGetTimeStamp");
+    mach_timebase_info_data_t timebase;
+    if (mach_timebase_info(&timebase) == KERN_SUCCESS) {
+        nanosPerTick = (double)timebase.numer / timebase.denom;
+    }
 }
 
 static void resolveOnce(void) {
@@ -43,10 +52,11 @@ uint64_t MTEventSender(CGEventRef event) {
     return id;
 }
 
-uint64_t MTReadScrollDevice(CGEventRef event, double *vertical, double *horizontal) {
+uint64_t MTReadScrollDevice(CGEventRef event, double *vertical, double *horizontal, uint64_t *timestampNanoseconds) {
     resolveOnce();
     *vertical = 0;
     *horizontal = 0;
+    *timestampNanoseconds = 0;
     if (!copyHIDEvent || !getSender) return 0;
     CFTypeRef input = copyHIDEvent(event);
     if (!input) return 0;
@@ -55,6 +65,9 @@ uint64_t MTReadScrollDevice(CGEventRef event, double *vertical, double *horizont
     if (getEventType && getEventFloat && getEventType(input) == scroll) {
         *horizontal = getEventFloat(input, scroll << 16);
         *vertical = getEventFloat(input, (scroll << 16) | 1);
+        if (getHIDTimestamp && nanosPerTick > 0) {
+            *timestampNanoseconds = (uint64_t)(getHIDTimestamp(input) * nanosPerTick);
+        }
     }
     CFRelease(input);
     return id;

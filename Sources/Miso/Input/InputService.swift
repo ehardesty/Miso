@@ -470,30 +470,33 @@ final class InputService {
               event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else { return }
         var rawVertical = 0.0
         var rawHorizontal = 0.0
-        let sender = MTReadScrollDevice(event, &rawVertical, &rawHorizontal)
+        var eventTime: UInt64 = 0
+        let sender = MTReadScrollDevice(event, &rawVertical, &rawHorizontal, &eventTime)
         guard let device = context.mouseSenders[sender],
               let profile = profiles[device], profile.changesWheel else { return }
         let continuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
+        let timestamp = eventTime == 0 ? DispatchTime.now().uptimeNanoseconds : eventTime
         let key = WheelKey(sender: sender, continuous: continuous)
         var state = wheels[key] ?? Wheels()
         Self.transformAxis(
             event, axis: &state.vertical, settings: profile.verticalWheel,
-            reversed: profile.reverseVertical, continuous: continuous, rawUnits: rawVertical,
+            reversed: profile.reverseVertical, continuous: continuous, rawUnits: rawVertical, timestamp: timestamp,
             fields: (.scrollWheelEventDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventPointDeltaAxis1)
         )
         Self.transformAxis(
             event, axis: &state.horizontal, settings: profile.horizontalWheel,
-            reversed: profile.reverseHorizontal, continuous: continuous, rawUnits: rawHorizontal,
+            reversed: profile.reverseHorizontal, continuous: continuous, rawUnits: rawHorizontal, timestamp: timestamp,
             fields: (.scrollWheelEventDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventPointDeltaAxis2)
         )
         wheels[key] = state
     }
 
     private static func transformAxis(
-        _ event: CGEvent, axis: inout WheelAxis, settings: AxisSettings, reversed: Bool, continuous: Bool, rawUnits: Double,
+        _ event: CGEvent, axis: inout WheelAxis, settings: AxisSettings, reversed: Bool, continuous: Bool,
+        rawUnits: Double, timestamp: UInt64,
         fields: (lines: CGEventField, fixed: CGEventField, points: CGEventField)
     ) {
-        guard settings != AxisSettings() || reversed else { return }
+        guard settings.changesWheel || reversed else { return }
         let old = WheelDelta(
             lines: event.getIntegerValueField(fields.lines),
             fixed: event.getDoubleValueField(fields.fixed),
@@ -501,7 +504,7 @@ final class InputService {
         )
         let value = axis.transform(
             old, settings: settings, reversed: reversed, continuous: continuous,
-            timestamp: event.timestamp, rawUnits: rawUnits
+            timestamp: timestamp, rawUnits: rawUnits
         )
         guard value != old else { return }
         // The least precise field is written first. Writing it last can

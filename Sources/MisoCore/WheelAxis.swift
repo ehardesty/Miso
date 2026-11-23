@@ -14,11 +14,11 @@ public struct WheelAxis: Sendable {
     private var lineRemainder = 0.0
     private var lastTimestamp: UInt64?
     private var lastDirection = 0.0
+    private var stepsPerSecond = 0.0
 
     public init() {}
 
-    /// Update the three Quartz representations together. Only line-mode events
-    /// use a remainder, so repeated sub-line inputs stay useful in line-only views.
+    /// Timestamp is the wheel event's monotonic time in nanoseconds.
     public mutating func transform(
         _ delta: WheelDelta,
         settings: AxisSettings,
@@ -27,7 +27,7 @@ public struct WheelAxis: Sendable {
         timestamp: UInt64,
         rawUnits: Double? = nil
     ) -> WheelDelta {
-        guard settings != AxisSettings() || reversed else { return delta }
+        guard settings.changesWheel || reversed else { return delta }
         let input: Double
         if continuous {
             input = delta.points
@@ -38,39 +38,59 @@ public struct WheelAxis: Sendable {
         }
         guard input.isFinite, input != 0 else { return delta }
         let direction = input.sign == .minus ? -1.0 : 1.0
+        let acceleration = settings.wheelAccelerationAmount
+        let steps = rawUnits.flatMap { $0.isFinite && $0 != 0 ? abs($0) : nil }
+        let custom = acceleration > 0 && !continuous && steps != nil
         if direction != lastDirection { lineRemainder = 0 }
-
         var gain = settings.speedMultiplier * (reversed ? -1 : 1)
-        let acceleration = settings.accelerationAmount
-        if acceleration > 0, direction == lastDirection, let previous = lastTimestamp, timestamp > previous {
-            let elapsed = Double(timestamp - previous) / 1_000_000
-            let activity = min(1, max(0, (65 - elapsed) / 55))
-            gain *= 1 + acceleration * activity
+        if custom, let steps {
+            let rate = updateStepRate(steps: steps, direction: direction, at: timestamp)
+            gain *= 1 + acceleration * settings.wheelRamp.boostFraction(at: rate)
+            lastTimestamp = timestamp
+        } else {
+            lastTimestamp = nil
+            stepsPerSecond = 0
+            if acceleration > 0 && gain == 1 {
+                lineRemainder = 0
+                return delta
+            }
         }
-        lastTimestamp = timestamp
         lastDirection = direction
 
-        let linear = acceleration <= -1 && !continuous
-        let linearUnits: Double
-        if let rawUnits, rawUnits.isFinite, rawUnits != 0 {
-            // HID reports precede macOS natural-scroll direction.
-            linearUnits = abs(rawUnits) * direction
-        } else {
-            linearUnits = input
-        }
-        let lines = (linear ? linearUnits : input) * gain
-        let fixed = (linear ? linearUnits : delta.fixed) * gain
-        let points = (linear ? linearUnits * 10 : delta.points) * gain
+        let usesSteps = !continuous && (custom || acceleration < 0)
+        // HID reports precede macOS natural-scroll direction.
+        let units = (steps ?? abs(input)) * direction
+        let lines = (usesSteps ? units : input) * gain
+        let fixed = (usesSteps ? units : delta.fixed) * gain
+        let points = (usesSteps ? units * 10 : delta.points) * gain
         if continuous {
             return WheelDelta(lines: Self.integral(Double(delta.lines) * gain), fixed: fixed, points: points)
         }
         let sum = lines + lineRemainder
         let wholeLines = Self.integral(sum)
-        // Some applications read only whole wheel lines. Keep every nonzero
-        // detent visible there, even when finer encodings carry a fraction.
-        let integral = wholeLines == 0 ? (lines < 0 ? -1 : 1) : wholeLines
-        lineRemainder = wholeLines == 0 ? 0 : sum - Double(wholeLines)
-        return WheelDelta(lines: integral, fixed: fixed, points: points)
+        // Custom carries fractional lines so apps that read whole lines can
+        // approximate the same total distance. Preserve the old modes' minimum.
+        if wholeLines == 0 && !custom {
+            lineRemainder = 0
+            return WheelDelta(lines: lines < 0 ? -1 : 1, fixed: fixed, points: points)
+        }
+        lineRemainder = sum - Double(wholeLines)
+        return WheelDelta(lines: wholeLines, fixed: fixed, points: points)
+    }
+
+    private mutating func updateStepRate(steps: Double, direction: Double, at timestamp: UInt64) -> Double {
+        guard direction == lastDirection, let previous = lastTimestamp, timestamp >= previous,
+              timestamp - previous < 80_000_000 else {
+            stepsPerSecond = 0
+            return 0
+        }
+        let elapsed = Double(timestamp - previous) / 1_000_000
+        if elapsed > 0 {
+            // A short average keeps grouped or closely spaced reports from jumping to full boost.
+            let speed = min(Double(WheelRamp.rateRange.upperBound), steps * 1_000 / elapsed)
+            stepsPerSecond += (speed - stepsPerSecond) * min(1, elapsed / 32)
+        }
+        return stepsPerSecond
     }
 
     private static func integral(_ value: Double) -> Int64 {

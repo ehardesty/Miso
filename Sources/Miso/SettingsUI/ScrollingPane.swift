@@ -8,7 +8,7 @@ struct ScrollingPane: View {
     var body: some View {
         Form {
             Section {
-                AxisControls(model: model, scope: scope, axis: \.verticalWheel, overrides: \.verticalWheel)
+                WheelAxisControls(model: model, scope: scope, axis: \.verticalWheel, overrides: \.verticalWheel)
                 ProfileControl(model: model, scope: scope, field: \.reverseVertical,
                                overrideField: \.reverseVertical, overrideTitle: "Override Direction") {
                     Toggle("Reverse direction", isOn: $0)
@@ -17,7 +17,7 @@ struct ScrollingPane: View {
                 Label("Vertical Wheel", systemImage: "arrow.up.and.down")
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("With acceleration Off, scrolling follows physical wheel steps when macOS reports them. Trackpad and gesture scrolling keep native behavior.")
+                    Text("Custom sets the distance for slow wheel steps and adds a capped boost for fast scrolling. With continuous wheels or missing step data, Custom scales macOS scrolling using the distance setting.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     ScopeNote(model: model, scope: scope)
@@ -26,7 +26,7 @@ struct ScrollingPane: View {
                 .multilineTextAlignment(.leading)
             }
             Section {
-                AxisControls(model: model, scope: scope, axis: \.horizontalWheel, overrides: \.horizontalWheel)
+                WheelAxisControls(model: model, scope: scope, axis: \.horizontalWheel, overrides: \.horizontalWheel)
                 ProfileControl(model: model, scope: scope, field: \.reverseHorizontal,
                                overrideField: \.reverseHorizontal, overrideTitle: "Override Direction") {
                     Toggle("Reverse direction", isOn: $0)

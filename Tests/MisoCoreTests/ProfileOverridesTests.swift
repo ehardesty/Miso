@@ -55,6 +55,23 @@ import Testing
     #expect(inherited.mapping(for: back.button, modifiers: [])?.tap == .back)
 }
 
+@Test func wheelRampSurvivesRelaunchAndInheritsByAxis() throws {
+    var settings = Settings()
+    let mouseRamp = WheelRamp(startRate: 35, fullRate: 70, curve: .gradual)
+    let appRamp = WheelRamp(startRate: 40, fullRate: 80, curve: .quick)
+    settings.global.verticalWheel.acceleration = 2
+    settings.deviceProfiles["mouse", default: ProfileOverrides()].verticalWheel.wheelRamp = mouseRamp
+    settings.appProfiles["editor", default: ProfileOverrides()].verticalWheel.wheelRamp = appRamp
+
+    settings = try roundTrip(settings)
+    let editorProfile = settings.profile(device: "mouse", app: "editor")
+    #expect(editorProfile.verticalWheel == AxisSettings(acceleration: 2, wheelRamp: appRamp))
+    #expect(editorProfile.horizontalWheel == AxisSettings())
+
+    settings.appProfiles["editor"]?.verticalWheel.wheelRamp = nil
+    #expect(settings.profile(device: "mouse", app: "editor").verticalWheel.wheelRamp == mouseRamp)
+}
+
 @Test func legacyAppSnapshotKeepsLocalActionsAndLetsCopiedRowsInherit() throws {
     let legacyJSON = """
         {
@@ -90,6 +107,7 @@ import Testing
     let effective = settings.profile(device: "mouse", app: "editor")
 
     #expect(effective.verticalWheel.speed == 2)
+    #expect(effective.verticalWheel.wheelRamp == WheelRamp(startRate: 25, fullRate: 50, curve: .linear))
     #expect(effective.mapping(for: .standard(3), modifiers: [])?.tap == .showDesktop)
     #expect(effective.mapping(for: .standard(4), modifiers: [])?.tap == .missionControl)
     #expect(settings.profile(device: nil, app: "editor").mapping(for: .standard(3), modifiers: [])?.tap == .back)
