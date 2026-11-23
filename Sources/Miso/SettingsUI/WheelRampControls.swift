@@ -54,7 +54,7 @@ private struct RateRow: View {
                 Slider(value: sliderValue, in: range) { Text(title) }
                     .labelsHidden()
                     .accessibilityValue(spokenText)
-                Text("\(rate) steps/s")
+                Text(rate.wheelRateText)
                     .monospacedDigit()
                     .frame(width: 80, alignment: .trailing)
                     .accessibilityHidden(true)
@@ -69,11 +69,16 @@ private struct RateRow: View {
         Double(WheelRamp.rateRange.lowerBound)...Double(WheelRamp.rateRange.upperBound)
     }
 
-    private var spokenText: String { "\(rate) wheel steps per second" }
+    private var spokenText: String { rate.spokenWheelRate }
 
     private var sliderValue: Binding<Double> {
         Binding(get: { Double(rate) }, set: { rate = Int($0.rounded()) })
     }
+}
+
+extension Int {
+    var wheelRateText: String { "\(self) \(self == 1 ? "step" : "steps")/s" }
+    var spokenWheelRate: String { "\(self) wheel \(self == 1 ? "step" : "steps") per second" }
 }
 
 private extension WheelRamp.Curve {

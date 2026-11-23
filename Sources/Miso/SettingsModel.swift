@@ -149,6 +149,10 @@ final class SettingsModel: ObservableObject {
         }
     }
 
+    func setWheelProbe(_ probe: WheelProbe) { input.setWheelProbe(probe) }
+
+    func removeWheelProbe(_ probe: WheelProbe) { input.removeWheelProbe(probe) }
+
     func requestAccessibility() {
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         refreshPermissions()

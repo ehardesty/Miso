@@ -39,18 +39,17 @@ struct WheelAxisControls: View {
                     SpeedSlider(title: title, speed: speed)
                 } else {
                     SpeedSlider(
-                        title: title, speed: speed, valueText: Self.linesText,
-                        accessibilityText: { "\(Self.linesText($0)) per wheel step" },
+                        title: title, speed: speed, valueText: \.linesText,
+                        accessibilityText: { "\($0.linesText) per wheel step" },
                         valueWidth: 72, stepsPerUnit: 20
                     )
                 }
             }
         }
-    }
-
-    private static func linesText(_ lines: Double) -> String {
-        let number = lines.formatted(.number.precision(.fractionLength(0...2)))
-        return lines == 1 ? "\(number) line" : "\(number) lines"
+        if modes.contains(.boost) {
+            // A fresh live test per scope, so a reading never carries over to another curve.
+            WheelCurvePanel(model: model, scope: scope, axis: axis).id(scope)
+        }
     }
 }
 

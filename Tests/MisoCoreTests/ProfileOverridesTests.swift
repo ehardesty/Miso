@@ -18,13 +18,15 @@ import Testing
 
     settings = try roundTrip(settings)
     let effective = settings.profile(device: "mouse", app: "editor")
-    #expect(effective.verticalWheel == AxisSettings(mode: .boost, boost: 1))
+    #expect(effective.verticalWheel.speed == 1)
+    #expect(effective.verticalWheel.mode == .boost && effective.verticalWheel.wheelBoost(atRate: 120) == 2)
     #expect(!effective.reverseHorizontal)
 
     settings.appProfiles["editor"]?.verticalWheel.boostSpeed = nil
     settings.appProfiles["editor"]?.reverseHorizontal = nil
     let inherited = settings.profile(device: "mouse", app: "editor")
-    #expect(inherited.verticalWheel == AxisSettings(mode: .boost, speed: 2, boost: 1))
+    #expect(inherited.verticalWheel.speed == 2)
+    #expect(inherited.verticalWheel.mode == .boost && inherited.verticalWheel.wheelBoost(atRate: 120) == 2)
     #expect(inherited.reverseHorizontal)
 }
 
@@ -67,8 +69,8 @@ import Testing
 
     settings = try roundTrip(settings)
     let editorProfile = settings.profile(device: "mouse", app: "editor")
-    #expect(editorProfile.verticalWheel == AxisSettings(mode: .boost, boost: 2, wheelRamp: appRamp))
-    #expect(editorProfile.horizontalWheel == AxisSettings())
+    #expect(editorProfile.verticalWheel.wheelRamp == appRamp)
+    #expect(editorProfile.horizontalWheel == InputProfile().horizontalWheel)
 
     settings.appProfiles["editor"]?.verticalWheel.wheelRamp = nil
     #expect(settings.profile(device: "mouse", app: "editor").verticalWheel.wheelRamp == mouseRamp)
@@ -102,6 +104,7 @@ import Testing
 @Test func appTuningAppliesOnlyToMiceUsingThatMode() throws {
     var settings = Settings()
     settings.global.verticalWheel.systemSpeed = 1.2
+    settings.global.verticalWheel.boost = 1
     settings.deviceProfiles["mouse", default: ProfileOverrides()].verticalWheel.mode = .boost
     settings.deviceProfiles["mouse"]?.verticalWheel.boostSpeed = 0.8
     settings.appProfiles["editor", default: ProfileOverrides()]
@@ -120,6 +123,48 @@ import Testing
     #expect(settings.profile(device: "mouse", app: nil).verticalWheel.speed == 0.8)
 }
 
+@Test func customWheelUsesTheDefaultCurveWhenFirstSelected() {
+    var profile = InputProfile()
+    #expect(!profile.changesWheel)
+
+    profile.verticalWheel.mode = .boost
+    profile.horizontalWheel.mode = .boost
+    for wheel in [profile.verticalWheel, profile.horizontalWheel] {
+        #expect(wheel.wheelRamp == WheelRamp(startRate: 1, fullRate: 110, curve: .quick))
+        #expect(wheel.wheelLinesPerStep(atRate: 1) == 1.5)
+        #expect(wheel.wheelLinesPerStep(atRate: 110) == 6)
+    }
+}
+
 private func roundTrip(_ settings: Settings) throws -> Settings {
     try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(settings))
+}
+
+@Test func liveWheelSamplesCountOnlyForTheMouseAndSettingsTheCurveShows() {
+    var settings = Settings()
+    settings.global.verticalWheel = AxisSettings(mode: .boost, boost: 2)
+    var tuned = ProfileOverrides()
+    tuned.verticalWheel.boost = 4
+    settings.deviceProfiles["tuned"] = tuned
+    var fixedTuning = ProfileOverrides()
+    fixedTuning.verticalWheel.linearSpeed = 3
+    settings.deviceProfiles["fixed-tuning"] = fixedTuning
+    var editor = ProfileOverrides()
+    editor.verticalWheel.boostSpeed = 2
+    settings.appProfiles["editor"] = editor
+    let curve = settings.global.verticalWheel
+    func fit(_ device: String, app: String? = nil, used: AxisSettings? = nil, for shown: String? = nil) -> WheelSample.Fit {
+        let used = used ?? settings.profile(device: device, app: app).verticalWheel
+        let sample = WheelSample(input: .steps, device: device, app: app, settings: used, rate: 40)
+        return settings.fit(of: sample, to: curve, axis: \.verticalWheel, device: shown)
+    }
+
+    #expect(fit("plain") == .matches)
+    #expect(fit("fixed-tuning") == .matches)
+    #expect(fit("plain", for: "tuned") == .otherMouse)
+    #expect(fit("tuned") == .otherSettings)
+    #expect(fit("plain", app: "editor") == .otherSettings)
+    #expect(fit("plain", used: AxisSettings(mode: .boost, boost: 3)) == .preview)
+    #expect(fit("tuned", used: curve) == .otherSettings)
+    #expect(fit("plain", used: AxisSettings()) == .otherSettings)
 }

@@ -17,7 +17,7 @@ struct ScrollingPane: View {
                 Label("Vertical Wheel", systemImage: "arrow.up.and.down")
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Custom sets the distance for slow wheel steps and adds a capped boost for fast scrolling. With continuous wheels or missing step data, Custom scales macOS scrolling using the distance setting.")
+                    Text("In Custom, each notch scrolls the distance you set when you turn the wheel slowly. Turn the wheel faster to scroll farther per notch.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     ScopeNote(model: model, scope: scope)

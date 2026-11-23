@@ -64,6 +64,7 @@ final class InputService {
     private var recording = ButtonRecording.idle
     private var allowed = false
     private var systemPaused = false
+    private var wheelProbe: WheelProbe?
 
     var onStatus: ((InputStatus) -> Void)?
     var onButton: ((MouseButton) -> Void)?
@@ -95,6 +96,19 @@ final class InputService {
             if contextChanged || permissionsChanged || lastStatus == nil || (tap == nil && !needs.isEmpty) {
                 refreshTaps()
             }
+        }
+    }
+
+    func setWheelProbe(_ probe: WheelProbe) {
+        thread.enqueue { [self] in
+            wheelProbe = probe
+            if !subscription.contains(.wheel) { probe.record(.wheelInactive) }
+        }
+    }
+
+    func removeWheelProbe(_ probe: WheelProbe) {
+        thread.enqueue { [self] in
+            if wheelProbe === probe { wheelProbe = nil }
         }
     }
 
@@ -200,6 +214,7 @@ final class InputService {
         }
         var desired = needs
         if recording.isActive || recording.key != nil || hasNativeHold { desired.insert(.buttons) }
+        let observedWheel = subscription.contains(.wheel)
         var failed = false
         if desired.isEmpty {
             tap = nil
@@ -214,6 +229,9 @@ final class InputService {
             } else {
                 failed = true
             }
+        }
+        if observedWheel && !subscription.contains(.wheel) {
+            wheelProbe?.record(.wheelInactive)
         }
         if mayNeedMotion || hasNativeHold || recording.isActive || recording.key != nil || !holds.isEmpty {
             if motionTap == nil {
@@ -465,30 +483,45 @@ final class InputService {
     }
 
     private func transformWheel(_ event: CGEvent) {
-        guard context.settings.enabled,
-              event.getIntegerValueField(.scrollWheelEventScrollPhase) == 0,
-              event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else { return }
+        guard context.settings.enabled else { return }
+        guard event.getIntegerValueField(.scrollWheelEventScrollPhase) == 0,
+              event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else {
+            wheelProbe?.record(.gesture)
+            return
+        }
         var rawVertical = 0.0
         var rawHorizontal = 0.0
         var eventTime: UInt64 = 0
         let sender = MTReadScrollDevice(event, &rawVertical, &rawHorizontal, &eventTime)
-        guard let device = context.mouseSenders[sender],
-              let profile = profiles[device], profile.changesWheel else { return }
+        guard let device = context.mouseSenders[sender], let profile = profiles[device] else {
+            wheelProbe?.record(.unknownMouse)
+            return
+        }
+        let changesWheel = profile.changesWheel
+        guard changesWheel || wheelProbe != nil else { return }
         let continuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
         let timestamp = eventTime == 0 ? DispatchTime.now().uptimeNanoseconds : eventTime
         let key = WheelKey(sender: sender, continuous: continuous)
         var state = wheels[key] ?? Wheels()
-        Self.transformAxis(
-            event, axis: &state.vertical, settings: profile.verticalWheel,
-            reversed: profile.reverseVertical, continuous: continuous, rawUnits: rawVertical, timestamp: timestamp,
-            fields: (.scrollWheelEventDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventPointDeltaAxis1)
+        if changesWheel {
+            Self.transformAxis(
+                event, axis: &state.vertical, settings: profile.verticalWheel,
+                reversed: profile.reverseVertical, continuous: continuous, rawUnits: rawVertical, timestamp: timestamp,
+                fields: QuartzWheelAxis.vertical.fields
+            )
+            Self.transformAxis(
+                event, axis: &state.horizontal, settings: profile.horizontalWheel,
+                reversed: profile.reverseHorizontal, continuous: continuous, rawUnits: rawHorizontal,
+                timestamp: timestamp,
+                fields: QuartzWheelAxis.horizontal.fields
+            )
+            wheels[key] = state
+        }
+        wheelProbe?.record(
+            event, device: device, app: context.app, profile: profile, continuous: continuous,
+            raw: (rawVertical, rawHorizontal),
+            rates: (state.vertical.stepsPerSecond, state.horizontal.stepsPerSecond), timestamp: timestamp
         )
-        Self.transformAxis(
-            event, axis: &state.horizontal, settings: profile.horizontalWheel,
-            reversed: profile.reverseHorizontal, continuous: continuous, rawUnits: rawHorizontal, timestamp: timestamp,
-            fields: (.scrollWheelEventDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventPointDeltaAxis2)
-        )
-        wheels[key] = state
     }
 
     private static func transformAxis(

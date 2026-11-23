@@ -18,8 +18,8 @@ public struct Settings: Codable, Equatable, Sendable {
 
 public struct InputProfile: Codable, Equatable, Sendable {
     public var pointer = AxisSettings()
-    public var verticalWheel = AxisSettings()
-    public var horizontalWheel = AxisSettings()
+    public var verticalWheel = AxisSettings.defaultWheel
+    public var horizontalWheel = AxisSettings.defaultWheel
     public var reverseVertical = false
     public var reverseHorizontal = false
     public var swipeThreshold = 50.0
@@ -45,6 +45,11 @@ public enum AccelerationMode: String, Codable, CaseIterable, Identifiable, Senda
 
 public struct AxisSettings: Codable, Equatable, Sendable {
     public static let wheelBoostRange = 1.0...9.0
+    static let defaultWheel: Self = {
+        var axis = Self(boost: 3, wheelRamp: WheelRamp(startRate: 1, fullRate: 110, curve: .quick))
+        axis.boostSpeed = 1.5
+        return axis
+    }()
 
     public var mode = AccelerationMode.system
     public var linearSpeed = 1.0
@@ -98,6 +103,16 @@ public struct AxisSettings: Codable, Equatable, Sendable {
         guard acceleration.isFinite else { return 0 }
         guard acceleration > 0 else { return max(-1, acceleration) }
         return min(Self.wheelBoostRange.upperBound, max(Self.wheelBoostRange.lowerBound, acceleration))
+    }
+
+    /// Custom wheel multiplier on the slow-scroll distance at an estimated rate in steps/s.
+    public func wheelBoost(atRate rate: Double) -> Double {
+        1 + max(0, wheelAccelerationAmount) * wheelRamp.boostFraction(at: rate)
+    }
+
+    /// Lines per wheel step that Custom applies to stepped wheels at an estimated rate.
+    public func wheelLinesPerStep(atRate rate: Double) -> Double {
+        speedMultiplier * wheelBoost(atRate: rate)
     }
 }
 

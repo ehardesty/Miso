@@ -14,7 +14,8 @@ public struct WheelAxis: Sendable {
     private var lineRemainder = 0.0
     private var lastTimestamp: UInt64?
     private var lastDirection = 0.0
-    private var stepsPerSecond = 0.0
+    /// Most recent rate used by the Custom response.
+    public private(set) var stepsPerSecond = 0.0
 
     public init() {}
 
@@ -42,10 +43,11 @@ public struct WheelAxis: Sendable {
         let steps = rawUnits.flatMap { $0.isFinite && $0 != 0 ? abs($0) : nil }
         let custom = acceleration > 0 && !continuous && steps != nil
         if direction != lastDirection { lineRemainder = 0 }
-        var gain = settings.speedMultiplier * (reversed ? -1 : 1)
+        let sign = reversed ? -1.0 : 1.0
+        var gain = settings.speedMultiplier * sign
         if custom, let steps {
             let rate = updateStepRate(steps: steps, direction: direction, at: timestamp)
-            gain *= 1 + acceleration * settings.wheelRamp.boostFraction(at: rate)
+            gain = settings.wheelLinesPerStep(atRate: rate) * sign
             lastTimestamp = timestamp
         } else {
             lastTimestamp = nil
