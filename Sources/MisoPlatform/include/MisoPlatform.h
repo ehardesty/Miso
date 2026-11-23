@@ -11,6 +11,7 @@ uint64_t MTEventSender(CGEventRef event);
 uint64_t MTReadScrollDevice(CGEventRef event, double *vertical, double *horizontal, uint64_t *timestampNanoseconds);
 CFArrayRef _Nullable MTCopyMouseServices(void) CF_RETURNS_RETAINED;
 uint64_t MTServiceRegistryID(CFTypeRef service);
+bool MTRegistryServiceExists(uint64_t id);
 CFTypeRef _Nullable MTCopyServiceProperty(CFTypeRef service, CFStringRef key) CF_RETURNS_RETAINED;
 bool MTSetServiceProperty(CFTypeRef service, CFStringRef key, CFTypeRef value);
 

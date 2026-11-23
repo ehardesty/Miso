@@ -100,6 +100,15 @@ uint64_t MTServiceRegistryID(CFTypeRef service) {
     return (uint64_t)id;
 }
 
+bool MTRegistryServiceExists(uint64_t id) {
+    CFMutableDictionaryRef match = IORegistryEntryIDMatching(id);
+    if (!match) return false;
+    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, match);
+    if (!service) return false;
+    IOObjectRelease(service);
+    return true;
+}
+
 CFTypeRef MTCopyServiceProperty(CFTypeRef service, CFStringRef key) {
     return IOHIDServiceClientCopyProperty((IOHIDServiceClientRef)service, key);
 }

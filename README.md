@@ -21,7 +21,7 @@ open dist/Miso.app
 
 The build script signs the app ad hoc. Set `MISO_SIGN_IDENTITY` to use a local signing identity. macOS may require permissions again after an ad hoc rebuild.
 
-Use **Status** to grant Accessibility and Input Monitoring, then return to Miso and choose **Check Again**. Use one remapping utility at a time when evaluating input. The menu bar item opens settings, pauses remapping, or quits the app.
+Open **Settings…** from the Miso menu bar item. In **Status**, grant Accessibility and Input Monitoring, then return to Miso and choose **Check Again**. Turn on **Start at Login** to launch Miso when you sign in. Use one remapping utility at a time when evaluating input.
 
 In **Scrolling**, choose **macOS** to scale the native wheel response, **Fixed** for a steady distance per wheel step, or **Custom** to set the slow distance and fast-scroll boost independently. In Custom, set the estimated wheel rates where boost starts and reaches its cap, then choose a Gradual, Linear, or Quick ramp between them. Custom scales native scrolling when a wheel reports continuous motion or step data is unavailable. Apps determine how far a line moves. Trackpad and phased input keep their native behavior.
 

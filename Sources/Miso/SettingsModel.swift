@@ -35,6 +35,9 @@ final class SettingsModel: ObservableObject {
     private var nativeMice: [NativeMouse] = []
     private var app: String?
     private var observers: [NSObjectProtocol] = []
+    private var unlockObserver: NSObjectProtocol?
+    private var deviceRefresh: Task<Void, Never>?
+    private var recheckRoutingOnRefresh = false
     private var sleeping = false
     private var terminating = false
 
@@ -56,9 +59,12 @@ final class SettingsModel: ObservableObject {
         input.onRecordingCancelled = { [weak self] in self?.cancelButtonRecording() }
         logitech.onButton = { [weak self] event in self?.input.handleVendor(event) }
         logitech.onCancel = { [weak self] id in self?.input.cancelVendor(deviceID: id) }
-        // HID device callbacks can arrive before macOS updates its pointer services.
         logitech.onInventory = { [weak self] in self?.refreshMice() }
-        logitech.onTopology = { [weak self] in self?.refreshMice() }
+        logitech.onTopology = { [weak self] in
+            guard let self else { return }
+            self.refreshMice()
+            self.scheduleDeviceRefresh()
+        }
         observeWorkspace()
         refreshPermissions()
     }
@@ -219,10 +225,36 @@ final class SettingsModel: ObservableObject {
                 guard let self else { return }
                 self.sleeping = false
                 self.logitech.suspend(false)
-                self.refreshPermissions()
+                self.scheduleDeviceRefresh()
             }
         }
         observers = [activated, sleep, wake]
+        // Locking the screen can leave the system awake, so didWake alone misses it.
+        unlockObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.recheckRoutingOnRefresh = true
+                self.scheduleDeviceRefresh()
+            }
+        }
+    }
+
+    private func scheduleDeviceRefresh() {
+        guard !sleeping, !terminating else { return }
+        deviceRefresh?.cancel()
+        deviceRefresh = Task { [weak self] in
+            // The HID event service may appear shortly after the device callback.
+            for delay in [Duration.milliseconds(300), .seconds(1)] {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled, let self, !self.sleeping, !self.terminating else { return }
+                self.refreshPermissions()
+                guard self.recheckRoutingOnRefresh else { continue }
+                self.recheckRoutingOnRefresh = false
+                if self.inputMonitoringAllowed { self.logitech.recheckButtonRouting() }
+            }
+        }
     }
 
     private func refreshMice() {
@@ -306,8 +338,12 @@ final class SettingsModel: ObservableObject {
 
     func shutdown(_ completion: @escaping () -> Void) {
         terminating = true
+        deviceRefresh?.cancel()
         for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         observers = []
+        if let unlockObserver {
+            DistributedNotificationCenter.default().removeObserver(unlockObserver)
+        }
         let cleanup = DispatchGroup()
         cleanup.enter()
         input.shutdown { cleanup.leave() }

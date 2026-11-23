@@ -12,6 +12,7 @@ struct StatusPane: View {
                     InputStatusLabel(status: model.status, enabled: model.settings.enabled)
                 }
                 .toggleStyle(.switch)
+                StartAtLoginRow()
                 if let issue = model.logitechIssue {
                     Label(issue, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)

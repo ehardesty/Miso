@@ -59,22 +59,15 @@ final class PointerSettings {
     private static let linear = "HIDUseLinearScalingMouseAcceleration"
 
     private struct Ownership {
-        let service: AnyObject
-        let accelerationKey: String
-        let resolution: Int?
-        let acceleration: Int?
-        let linear: Int?
+        var service: AnyObject
+        var reportedAccelerationKey: String?
+        var resolution: Int?
+        var acceleration: Int?
+        var linear: Int?
         var applied: AxisSettings?
         var writes: [String: Int] = [:]
 
-        init(_ mouse: NativeMouse) {
-            service = mouse.service
-            accelerationKey = MTCopyServiceProperty(service, "HIDPointerAccelerationType" as CFString) as? String
-                ?? "HIDMouseAcceleration"
-            resolution = Self.read(service, PointerSettings.resolution)
-            acceleration = Self.read(service, accelerationKey)
-            linear = Self.read(service, PointerSettings.linear)
-        }
+        var accelerationKey: String { reportedAccelerationKey ?? "HIDMouseAcceleration" }
 
         static func read(_ service: AnyObject, _ key: String) -> Int? {
             MTCopyServiceProperty(service, key as CFString) as? Int
@@ -88,6 +81,13 @@ final class PointerSettings {
         }
 
         mutating func apply(_ settings: AxisSettings) -> Bool {
+            // Services can be enumerated before their pointer properties are available.
+            resolution = resolution ?? Self.read(service, PointerSettings.resolution)
+            if reportedAccelerationKey == nil, acceleration == nil {
+                reportedAccelerationKey = MTCopyServiceProperty(service, "HIDPointerAccelerationType" as CFString) as? String
+            }
+            acceleration = acceleration ?? Self.read(service, accelerationKey)
+            linear = linear ?? Self.read(service, PointerSettings.linear)
             let speed = settings.speedMultiplier
             let accelerationAmount = settings.accelerationAmount
             var succeeded = true
@@ -134,13 +134,21 @@ final class PointerSettings {
         }
 
         mutating func restore() -> Bool {
-            var succeeded = true
             let currentAcceleration = Self.read(service, accelerationKey)
-            let ownsAcceleration = writes[accelerationKey] != nil && writes[accelerationKey] == currentAcceleration
+            let lastAcceleration = writes[accelerationKey]
+            let ownsAcceleration = lastAcceleration != nil && lastAcceleration == currentAcceleration
+            var succeeded = lastAcceleration == nil || currentAcceleration != nil
             var didRestoreResolution = false
             for (key, baseline) in [(PointerSettings.linear, linear), (PointerSettings.resolution, resolution)] {
                 guard let baseline, let last = writes[key] else { continue }
-                guard Self.read(service, key) == last else { writes[key] = nil; continue }
+                guard let current = Self.read(service, key) else {
+                    succeeded = false
+                    continue
+                }
+                guard current == last else {
+                    writes[key] = nil
+                    continue
+                }
                 if MTSetServiceProperty(service, key as CFString, NSNumber(value: baseline)) {
                     writes[key] = nil
                     didRestoreResolution = didRestoreResolution || key == PointerSettings.resolution
@@ -155,7 +163,7 @@ final class PointerSettings {
                 } else {
                     succeeded = false
                 }
-            } else if !ownsAcceleration {
+            } else if !ownsAcceleration, currentAcceleration != nil {
                 writes[accelerationKey] = nil
             }
             applied = nil
@@ -167,26 +175,34 @@ final class PointerSettings {
 
     func apply(to devices: [NativeMouse], deviceIDs: [UInt64: String], settings: Settings, app: String?) -> [String] {
         let connected = Set(devices.map(\.sender))
-        owners = owners.filter { connected.contains($0.key) }
+        for id in Array(owners.keys) where !connected.contains(id) {
+            // The event system can omit a service that is still in the IORegistry.
+            if let owner = owners[id], !owner.writes.isEmpty, MTRegistryServiceExists(id) {
+                owners[id]?.applied = nil
+            } else {
+                owners[id] = nil
+            }
+        }
         var unavailable: [String] = []
         for device in devices {
             let value = settings.enabled
                 ? settings.profile(device: deviceIDs[device.sender] ?? device.model.id, app: app).pointer.activePointer
                 : AxisSettings()
-            if value == AxisSettings() {
-                if var owner = owners[device.sender] {
-                    if owner.restore() {
-                        owners[device.sender] = nil
-                    } else {
-                        owners[device.sender] = owner
-                        unavailable.append(device.model.name)
-                    }
+            let usesDefaults = value == AxisSettings()
+            if usesDefaults, owners[device.sender] == nil { continue }
+
+            var owner = owners[device.sender] ?? Ownership(service: device.service)
+            owner.service = device.service
+            if usesDefaults {
+                if owner.restore() {
+                    owners[device.sender] = nil
+                    continue
                 }
-            } else {
-                var owner = owners[device.sender] ?? Ownership(device)
-                if owner.applied != value, !owner.apply(value) { unavailable.append(device.model.name) }
-                owners[device.sender] = owner
+                unavailable.append(device.model.name)
+            } else if owner.applied != value, !owner.apply(value) {
+                unavailable.append(device.model.name)
             }
+            owners[device.sender] = owner
         }
         return unavailable
     }

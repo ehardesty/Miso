@@ -28,6 +28,7 @@ final class HIDEndpoint: @unchecked Sendable {
     let serial: String?
     let transport: String
     let isBolt: Bool
+    let hasMouseUsage: Bool
     let queue: DispatchQueue
 
     private let reportID: UInt8
@@ -87,6 +88,7 @@ final class HIDEndpoint: @unchecked Sendable {
         serial = property("SerialNumber")
         transport = property("Transport") ?? "USB"
         isBolt = product == 0xC548
+        hasMouseUsage = IOHIDDeviceConformsTo(device, UInt32(kHIDPage_GenericDesktop), UInt32(kHIDUsage_GD_Mouse))
         self.queue = DispatchQueue(label: "Miso HID++ \(registryID)", qos: .utility)
         bufferSize = maxInput
         reportBuffer = .allocate(capacity: maxInput)

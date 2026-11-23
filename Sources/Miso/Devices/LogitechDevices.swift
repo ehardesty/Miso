@@ -11,11 +11,20 @@ final class LogitechDevices {
         var mice: [LogitechMouse] = []
         var scanning = false
         var needsScan = false
+        var retryMissingAfterScan = false
         var applying = false
         var policyChanged = false
         var unknownSlotProbe: [UInt8: UInt64] = [:]
         var nonMouseSlots: Set<UInt8> = []
         var knownMouseSlots: Set<UInt8> = []
+
+        var hasMissingMice: Bool {
+            if !endpoint.isBolt {
+                guard nonMouseSlots.isEmpty, endpoint.hasMouseUsage || !knownMouseSlots.isEmpty else { return false }
+            }
+            let present = Set(mice.map(\.slot))
+            return present.isEmpty || !knownMouseSlots.isSubset(of: present)
+        }
     }
 
     var onInventory: (() -> Void)?
@@ -91,10 +100,22 @@ final class LogitechDevices {
     }
 
     func retryMissingMice() {
+        for id in Array(connections.keys) {
+            guard let connection = connections[id], connection.hasMissingMice else { continue }
+            if connection.scanning {
+                connections[id]?.retryMissingAfterScan = true
+            } else {
+                scan(id)
+            }
+        }
+    }
+
+    func recheckButtonRouting() {
         let ids = connections.compactMap { id, connection -> UInt64? in
-            guard connection.endpoint.isBolt, !connection.scanning else { return nil }
-            let present = Set(connection.mice.map(\.slot))
-            return present.isEmpty || !connection.knownMouseSlots.isSubset(of: present) ? id : nil
+            guard !connection.scanning, connection.mice.contains(where: {
+                !$0.captured.isEmpty || $0.unavailableControls
+            }) else { return nil }
+            return id
         }
         for id in ids { scan(id) }
     }
@@ -129,8 +150,10 @@ final class LogitechDevices {
                 self.connections[id]?.knownMouseSlots.subtract(inventory.nonMouseSlots)
                 self.connections[id]?.scanning = false
                 self.publish(inventory.mice, for: id)
-                if self.connections[id]?.needsScan == true {
-                    self.connections[id]?.needsScan = false
+                guard let current = self.connections[id] else { return }
+                self.connections[id]?.needsScan = false
+                self.connections[id]?.retryMissingAfterScan = false
+                if !self.suspended, current.needsScan || (current.retryMissingAfterScan && current.hasMissingMice) {
                     self.scan(id)
                 } else {
                     self.applyPolicy(id)
