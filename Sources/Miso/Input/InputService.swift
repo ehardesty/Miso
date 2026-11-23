@@ -70,10 +70,6 @@ final class InputService {
     var onButton: ((MouseButton) -> Void)?
     var onRecordingCancelled: (() -> Void)?
 
-    private static let buttonTypes: [CGEventType] = [
-        .leftMouseDown, .rightMouseDown, .otherMouseDown,
-        .leftMouseUp, .rightMouseUp, .otherMouseUp
-    ]
     private static let motionTypes: [CGEventType] = [
         .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged
     ]
@@ -221,7 +217,7 @@ final class InputService {
             subscription = []
         } else if tap == nil || subscription != desired {
             var types: [CGEventType] = []
-            if desired.contains(.buttons) { types += Self.buttonTypes }
+            if desired.contains(.buttons) { types += [.otherMouseDown, .otherMouseUp] }
             if desired.contains(.wheel) { types.append(.scrollWheel) }
             if let replacement = QuartzTap(observing: types, callback: Self.callback, owner: callbackOwner) {
                 tap = replacement
@@ -313,8 +309,9 @@ final class InputService {
                         refreshTaps()
                     }
                 }
-            } else if allowed && !fromMotionTap {
-                tap?.setEnabled(true)
+            } else {
+                if allowed && !fromMotionTap { tap?.setEnabled(true) }
+                thread.enqueue { [self] in refreshTaps() }
             }
             updateMotion()
             return event
@@ -325,13 +322,13 @@ final class InputService {
         case .scrollWheel:
             transformWheel(event)
             return event
-        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
-            guard let key = buttonKey(event) else { return event }
+        case .otherMouseDown:
+            guard let key = buttonKey(event, sender: MTEventSender(event)) else { return event }
             let result = press(key, flags: event.flags, location: event.location, native: event)
             updateMotion()
             return result
-        case .leftMouseUp, .rightMouseUp, .otherMouseUp:
-            guard let key = buttonKey(event) else { return event }
+        case .otherMouseUp:
+            guard let key = buttonKey(event, sender: MTEventSender(event)) else { return event }
             let result = release(key, location: event.location, native: event)
             thread.enqueue { [self] in refreshTaps() }
             return result
@@ -342,11 +339,10 @@ final class InputService {
         }
     }
 
-    private func buttonKey(_ event: CGEvent) -> ButtonKey? {
+    private func buttonKey(_ event: CGEvent, sender: UInt64) -> ButtonKey? {
         guard let number = UInt8(exactly: event.getIntegerValueField(.mouseEventButtonNumber)), number <= 31
         else { return nil }
         let button = MouseButton.standard(number)
-        let sender = MTEventSender(event)
         if let device = context.mouseSenders[sender] { return ButtonKey(device: device, button: button) }
         if sender == 0 {
             // Some BLE side-button edges lack a sender. Attribute only when
@@ -426,7 +422,7 @@ final class InputService {
         let device = context.mouseSenders[sender] ?? (sender == 0 ? soleMouse() : nil)
         guard let device else { return event }
 
-        let nativeKey: ButtonKey? = event.type == .mouseMoved ? nil : buttonKey(event)
+        let nativeKey: ButtonKey? = event.type == .mouseMoved ? nil : buttonKey(event, sender: sender)
         if let nativeKey, nativeKey == recording.key { return nil }
         if let nativeKey, case let .remap(number)? = holds[nativeKey] {
             ActionDelivery.rewrite(event, as: number)

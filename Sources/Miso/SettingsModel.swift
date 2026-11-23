@@ -41,6 +41,15 @@ final class SettingsModel: ObservableObject {
     private var sleeping = false
     private var terminating = false
 
+    private var effectiveApp: String? {
+        app.flatMap { settings.appProfiles[$0] == nil ? nil : $0 }
+    }
+
+    private var inputUnavailable: Bool {
+        if case .unavailable = status { return true }
+        return false
+    }
+
     init() {
         settings = SettingsStore.load()
         app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
@@ -207,8 +216,11 @@ final class SettingsModel: ObservableObject {
                 guard let self, let next = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
                     as? NSRunningApplication else { return }
                 guard self.app != next.bundleIdentifier else { return }
+                let previousProfile = self.effectiveApp
                 self.app = next.bundleIdentifier
-                self.apply()
+                if self.effectiveApp != previousProfile || self.pointerIssue != nil || self.inputUnavailable {
+                    self.apply()
+                }
             }
         }
         let sleep = center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -286,7 +298,7 @@ final class SettingsModel: ObservableObject {
         if logitechIssue != captureIssue { logitechIssue = captureIssue }
 
         let allowed = accessibilityAllowed && inputMonitoringAllowed && !sleeping
-        let effectiveApp = app.flatMap { settings.appProfiles[$0] == nil ? nil : $0 }
+        let effectiveApp = self.effectiveApp
         var effective = settings
         if sleeping { effective.enabled = false }
         input.configure(.init(
@@ -298,9 +310,7 @@ final class SettingsModel: ObservableObject {
         if pointerIssue != issue { pointerIssue = issue }
 
         var policy: [String: Set<UInt16>] = [:]
-        let systemAllowsRouting: Bool
-        if case .unavailable = status { systemAllowsRouting = false } else { systemAllowsRouting = true }
-        if allowed && systemAllowsRouting {
+        if allowed && !inputUnavailable {
             for mouse in vendorMice {
                 let id = mouse.descriptor.id
                 let profile = effective.profile(device: id, app: effectiveApp)
