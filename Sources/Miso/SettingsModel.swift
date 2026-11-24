@@ -33,7 +33,7 @@ final class SettingsModel: ObservableObject {
         url: SettingsStore.supportDirectory.appendingPathComponent("control-recovery.json")
     ))
     private var nativeMice: [NativeMouse] = []
-    private var app: String?
+    private var frontmostApp: NSRunningApplication?
     private var observers: [NSObjectProtocol] = []
     private var unlockObserver: NSObjectProtocol?
     private var deviceRefresh: Task<Void, Never>?
@@ -42,7 +42,7 @@ final class SettingsModel: ObservableObject {
     private var terminating = false
 
     private var effectiveApp: String? {
-        app.flatMap { settings.appProfiles[$0] == nil ? nil : $0 }
+        frontmostApp?.bundleIdentifier.flatMap { settings.appProfiles[$0] == nil ? nil : $0 }
     }
 
     private var inputUnavailable: Bool {
@@ -52,7 +52,7 @@ final class SettingsModel: ObservableObject {
 
     init() {
         settings = SettingsStore.load()
-        app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        frontmostApp = NSWorkspace.shared.frontmostApplication
 
         input.onStatus = { [weak self] status in
             guard let self, self.status != status else { return }
@@ -215,11 +215,15 @@ final class SettingsModel: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self, let next = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
                     as? NSRunningApplication else { return }
-                guard self.app != next.bundleIdentifier else { return }
+                guard self.frontmostApp?.processIdentifier != next.processIdentifier else { return }
                 let previousProfile = self.effectiveApp
-                self.app = next.bundleIdentifier
+                let previousNavigation = NavigationSwipe.target(of: self.frontmostApp)
+                self.frontmostApp = next
                 if self.effectiveApp != previousProfile || self.pointerIssue != nil || self.inputUnavailable {
                     self.apply()
+                } else {
+                    let navigation = NavigationSwipe.target(of: next)
+                    if navigation != previousNavigation { self.input.setNavigationTarget(navigation) }
                 }
             }
         }
@@ -304,7 +308,7 @@ final class SettingsModel: ObservableObject {
         input.configure(.init(
             settings: effective, mouseSenders: senderIDs,
             vendorIDs: Set(vendorMice.map(\.descriptor.id)), app: effectiveApp
-        ), allowed: allowed)
+        ), allowed: allowed, navigationPID: NavigationSwipe.target(of: frontmostApp))
         let unsupported = pointer.apply(to: nativeMice, deviceIDs: senderIDs, settings: effective, app: effectiveApp)
         let issue = unsupported.isEmpty ? nil : "macOS rejected pointer settings for \(unsupported.joined(separator: ", "))."
         if pointerIssue != issue { pointerIssue = issue }

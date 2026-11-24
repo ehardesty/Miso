@@ -5,7 +5,7 @@ import MisoPlatform
 enum ActionDelivery {
     static let marker: Int64 = 0x4D6F75736554776B
 
-    static func perform(_ action: MouseAction, at location: CGPoint) {
+    static func perform(_ action: MouseAction, at location: CGPoint, navigationPID: pid_t?) {
         switch action {
         case .doNothing:
             break
@@ -14,8 +14,10 @@ enum ActionDelivery {
         case let .shortcut(shortcut):
             key(shortcut.keyCode, flags: shortcut.modifiers.eventFlags)
         case .back:
+            if let navigationPID, NavigationSwipe.back.schedule(at: location, targetPID: navigationPID) { return }
             click(3, at: location)
         case .forward:
+            if let navigationPID, NavigationSwipe.forward.schedule(at: location, targetPID: navigationPID) { return }
             click(4, at: location)
         case .previousSpace:
             systemKey(79)

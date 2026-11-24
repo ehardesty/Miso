@@ -21,7 +21,13 @@ final class InputService {
     private enum Hold {
         case remap(UInt8)
         case consumed
+        case navigation
         case waiting(ButtonMapping, Swipe, [CGEvent])
+
+        var needsMotion: Bool {
+            if case .navigation = self { return false }
+            return true
+        }
     }
 
     private enum ButtonRecording {
@@ -64,6 +70,7 @@ final class InputService {
     private var recording = ButtonRecording.idle
     private var allowed = false
     private var systemPaused = false
+    private var navigationPID: pid_t?
     private var wheelProbe: WheelProbe?
 
     var onStatus: ((InputStatus) -> Void)?
@@ -74,7 +81,7 @@ final class InputService {
         .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged
     ]
 
-    func configure(_ context: InputContext, allowed: Bool) {
+    func configure(_ context: InputContext, allowed: Bool, navigationPID: pid_t?) {
         thread.enqueue { [self] in
             let contextChanged = self.context != context
             if contextChanged {
@@ -88,10 +95,21 @@ final class InputService {
             }
             if self.allowed && !allowed { cancelInteractions() }
             let permissionsChanged = self.allowed != allowed
+            let navigationChanged = self.navigationPID != navigationPID
             self.allowed = allowed
-            if contextChanged || permissionsChanged || lastStatus == nil || (tap == nil && !needs.isEmpty) {
+            self.navigationPID = navigationPID
+            if contextChanged || permissionsChanged || navigationChanged || lastStatus == nil
+                || (tap == nil && (!needs.isEmpty || navigationNeedsButtons)) {
                 refreshTaps()
             }
+        }
+    }
+
+    func setNavigationTarget(_ pid: pid_t?) {
+        thread.enqueue { [self] in
+            guard navigationPID != pid else { return }
+            navigationPID = pid
+            refreshTaps()
         }
     }
 
@@ -191,6 +209,10 @@ final class InputService {
         DispatchQueue.main.async { [weak self] in self?.onStatus?(status) }
     }
 
+    private var navigationNeedsButtons: Bool {
+        navigationPID != nil && context.settings.enabled && !context.mouseSenders.isEmpty
+    }
+
     private func refreshTaps() {
         guard allowed else {
             dropTaps()
@@ -209,7 +231,9 @@ final class InputService {
             return false
         }
         var desired = needs
-        if recording.isActive || recording.key != nil || hasNativeHold { desired.insert(.buttons) }
+        if recording.isActive || recording.key != nil || hasNativeHold || navigationNeedsButtons {
+            desired.insert(.buttons)
+        }
         let observedWheel = subscription.contains(.wheel)
         var failed = false
         if desired.isEmpty {
@@ -229,7 +253,7 @@ final class InputService {
         if observedWheel && !subscription.contains(.wheel) {
             wheelProbe?.record(.wheelInactive)
         }
-        if mayNeedMotion || hasNativeHold || recording.isActive || recording.key != nil || !holds.isEmpty {
+        if mayNeedMotion || recording.isActive || recording.key != nil || holds.values.contains(where: \.needsMotion) {
             if motionTap == nil {
                 motionTap = QuartzTap(observing: Self.motionTypes, callback: Self.motionCallback, owner: callbackOwner)
                 motionTap?.setEnabled(false)
@@ -260,7 +284,7 @@ final class InputService {
             return false
         } ?? false
         let enabled = needsMotion || holds.contains { key, hold in
-            if case .standard = key.button { return true }
+            if case .standard = key.button { return hold.needsMotion }
             if case .waiting = hold { return true }
             return false
         }
@@ -361,6 +385,12 @@ final class InputService {
         return first
     }
 
+    private func navigationTarget(for event: CGEvent?) -> pid_t? {
+        guard let navigationPID else { return nil }
+        if let event, event.getIntegerValueField(.eventTargetUnixProcessID) != Int64(navigationPID) { return nil }
+        return navigationPID
+    }
+
     private func press(_ key: ButtonKey, flags: CGEventFlags, location: CGPoint, native: CGEvent?) -> CGEvent? {
         if key.button.isPrimary { return native }
         if holds[key] != nil || recording.key == key { return nil }
@@ -372,7 +402,15 @@ final class InputService {
         guard context.settings.enabled else { return native }
         guard let profile = profiles[key.device] else { return native }
         let modifiers = native == nil ? Modifiers() : Modifiers(flags: flags)
-        guard let mapping = profile.mapping(for: key.button, modifiers: modifiers) else { return native }
+        guard let mapping = profile.mapping(for: key.button, modifiers: modifiers) else {
+            guard modifiers.isEmpty, !flags.contains(.maskSecondaryFn), let native,
+                  let swipe = NavigationSwipe(button: key.button),
+                  let targetPID = navigationTarget(for: native),
+                  swipe.schedule(at: location, targetPID: targetPID)
+            else { return native }
+            holds[key] = .navigation
+            return nil
+        }
         if !mapping.swipes.isEmpty {
             holds[key] = .waiting(mapping, Swipe(threshold: profile.swipeThreshold), native?.copy().map { [$0] } ?? [])
             return nil
@@ -384,7 +422,7 @@ final class InputService {
                 holds[key] = .remap(number)
                 return native
             }
-            ActionDelivery.perform(action, at: location)
+            ActionDelivery.perform(action, at: location, navigationPID: navigationTarget(for: native))
         }
         holds[key] = .consumed
         return nil
@@ -405,11 +443,11 @@ final class InputService {
         case let .remap(number):
             if let native { ActionDelivery.rewrite(native, as: number) }
             return native
-        case .consumed:
+        case .consumed, .navigation:
             return nil
         case let .waiting(mapping, _, events):
             if let action = mapping.tap {
-                ActionDelivery.perform(action, at: location)
+                ActionDelivery.perform(action, at: location, navigationPID: navigationTarget(for: native))
             } else if let native, let up = native.copy() {
                 replay(events + [up])
             }
@@ -424,33 +462,34 @@ final class InputService {
 
         let nativeKey: ButtonKey? = event.type == .mouseMoved ? nil : buttonKey(event, sender: sender)
         if let nativeKey, nativeKey == recording.key { return nil }
-        if let nativeKey, case let .remap(number)? = holds[nativeKey] {
+        let nativeHold = nativeKey.flatMap { holds[$0] }
+        if case let .remap(number)? = nativeHold {
             ActionDelivery.rewrite(event, as: number)
             return event
         }
 
+        let navigationDrag = if case .navigation? = nativeHold { true } else { false }
         let key: ButtonKey
-        if let nativeKey, holds[nativeKey] != nil {
+        if let nativeKey, nativeHold != nil, !navigationDrag {
             key = nativeKey
         } else {
             let candidates = holds.compactMap { key, hold -> ButtonKey? in
                 guard key.device == device, case .logitech = key.button, case .waiting = hold else { return nil }
                 return key
             }
-            guard candidates.count == 1 else { return event }
+            guard candidates.count == 1 else { return navigationDrag ? nil : event }
             key = candidates[0]
         }
-        guard case let .waiting(mapping, originalSwipe, originalEvents)? = holds[key] else {
-            return nativeKey == key ? nil : event
-        }
+        let unconsumedDrag: CGEvent? = nativeKey == key || navigationDrag ? nil : event
+        guard case let .waiting(mapping, originalSwipe, originalEvents)? = holds[key] else { return unconsumedDrag }
 
         var swipe = originalSwipe
         let x = Double(event.getIntegerValueField(.mouseEventDeltaX))
         let y = Double(event.getIntegerValueField(.mouseEventDeltaY))
         if let action = swipe.move(x: x, y: y, actions: mapping.swipes) {
             holds[key] = .consumed
-            ActionDelivery.perform(action, at: event.location)
-            return nativeKey == key ? nil : event
+            ActionDelivery.perform(action, at: event.location, navigationPID: navigationTarget(for: event))
+            return unconsumedDrag
         }
 
         var events = originalEvents
@@ -463,7 +502,7 @@ final class InputService {
             events.append(copy)
         }
         holds[key] = .waiting(mapping, swipe, events)
-        return nativeKey == key ? nil : event
+        return unconsumedDrag
     }
 
     private func cancel(_ key: ButtonKey) {
