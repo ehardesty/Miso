@@ -134,8 +134,14 @@ else
         fail 'The prepared artifacts were built from a different commit.'
     private_repository="$(gh api "repos/$repository" --jq .private)"
     [[ "$private_repository" == false ]] || fail 'Sparkle needs a public release repository.'
-    tag_commit="$(gh api "repos/$repository/commits/tags/$tag" --jq .sha)" ||
+    tag_ref="refs/tags/$tag"
+    remote_tags="$(git ls-remote --exit-code "https://github.com/$repository.git" "$tag_ref" "$tag_ref^{}")" ||
         fail "Could not resolve $tag on GitHub. Check that it was pushed."
+    tag_commit="$(awk -v ref="$tag_ref" '
+        $2 == ref { direct = $1 }
+        $2 == ref "^{}" { peeled = $1 }
+        END { print (peeled ? peeled : direct) }
+    ' <<< "$remote_tags")"
     [[ "$tag_commit" == "$commit" ]] || fail "Push $tag at the commit used to build this release."
     swift package --force-resolved-versions resolve
     public_key="$(read_public_key)"
