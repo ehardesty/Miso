@@ -17,6 +17,13 @@ struct StatusPane: View {
                 if let updates {
                     AutomaticUpdateChecksRow(updates: updates)
                 }
+                if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+                    LabeledContent {
+                        Text(version).monospacedDigit()
+                    } label: {
+                        Label("Version", systemImage: "info.circle")
+                    }
+                }
                 if let issue = model.logitechIssue {
                     Label(issue, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
