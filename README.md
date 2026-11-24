@@ -2,66 +2,126 @@
 
 # Miso
 
-Miso (Mouse Input & Scrolling Optimization) is a native macOS menu bar utility for tuning external mice, with HID++ support for the Logitech MX Master 3S and MX Master 4.
+Miso, short for Mouse Input & Scrolling Optimization, is a macOS menu bar app for tuning external mice. Adjust how the pointer moves, set how far each wheel scrolls, and assign shortcuts or gestures to mouse buttons. You can use different settings for each mouse or app. Miso can also change the sensor resolution (DPI) on supported Logitech mice, including the MX Master 3S and MX Master 4.
 
-- Adjust pointer speed and acceleration using per-mouse macOS settings. Change hardware DPI directly when the mouse reports an adjustable sensor.
-- Set speed, acceleration, and direction independently for the vertical and horizontal wheels. Wheel events are processed as they arrive. Smooth scrolling is outside this version.
-- Remap buttons to clicks, shortcuts, navigation, or desktop actions. Assign a tap and up to four directional swipes on a held button.
-- Edit settings globally, by mouse, or by the frontmost app. In an app profile, turn off an override or choose **Use inherited mapping** to return to the mouse or global setting.
+## Build and run Miso
 
-## Run locally
-
-Build with Xcode 16 or newer on macOS. The app targets macOS 14 and later.
+Use an Apple Silicon Mac with macOS 14 or later and Xcode 16 or later. Run these commands from the repository root.
 
 ```sh
-swift test
 ./Scripts/build-app.sh
 open dist/Miso.app
 ```
 
-The build script produces an Apple Silicon app and signs it ad hoc. Set `MISO_SIGN_IDENTITY` to use a local signing identity. macOS may require permissions again after an ad hoc rebuild. Local builds have updates disabled.
+1. Open **Settings…** from the Miso menu bar item.
+2. In **Status**, click **Allow…** beside each missing permission. Miso needs **Accessibility** and **Input Monitoring**.
+3. If macOS asks you to quit and reopen Miso, do that first. In **Status**, click **Check Again**.
+4. To open Miso whenever you sign in, turn on **Start at Login**.
 
-Open **Settings…** from the Miso menu bar item. In **Status**, grant Accessibility and Input Monitoring, then return to Miso and choose **Check Again**. Turn on **Start at Login** to launch Miso when you sign in. Use one remapping utility at a time when evaluating input.
+Use one mouse remapping utility at a time. macOS may ask for permissions again after an ad hoc rebuild. To keep the same signing identity across builds, set `MISO_SIGN_IDENTITY` before building.
 
-In **Scrolling**, choose **macOS** to scale the native wheel response, **Fixed** for a steady distance per wheel step, or **Custom** to set the slow distance and fast-scroll boost independently. In Custom, set the estimated wheel rates where boost starts and reaches its cap, then choose a Gradual, Linear, or Quick ramp between them. Custom scales native scrolling when a wheel reports continuous motion or step data is unavailable. Apps determine how far a line moves. Trackpad and phased input keep their native behavior.
+## Tune your mouse
 
-Each scrolling and pointer mode remembers its own tuning when you switch modes.
+Use **Pointer** to set tracking speed and acceleration. For a mouse with adjustable DPI, use **Sensor Resolution** to change how far the pointer moves for the same physical movement.
 
-On the **Buttons & Gestures** page, choose **Press Button to Map…**, then press and release the mouse button you want to configure. Assign a Click action or a directional swipe in its editor. Left and right click remain available for normal use. Hold a mapped button while moving the mouse to run its assigned swipe action. You can assign your own keyboard shortcut per app when an app handles Back or Forward differently. The Spaces actions use the shortcuts enabled under **System Settings → Keyboard → Keyboard Shortcuts → Mission Control**.
+In **Scrolling**, set the direction and **Wheel mode** for the vertical and horizontal wheels separately. Each mode remembers its settings when you switch away.
 
-## Distribute a release
+- **macOS** keeps the macOS scroll response and lets you adjust its speed.
+- **Fixed** sets a steady distance per wheel step.
+- **Custom** lets you set a distance for slow turns and add boost for faster turns. For a wheel Miso can measure, use **Scroll to test** to try the response.
 
-Release builds use Sparkle for **Check for Updates…**. Automatic checks are on by default and can be turned off in Status. Miso asks before installing.
+Trackpad scrolling keeps its macOS behavior. If the wheel reports continuous movement or Miso can't read its individual steps, **Custom** uses **Slow scroll distance** to scale macOS scrolling.
 
-Use a public GitHub repository with a stable name. Keep your Developer ID Application identity, `notarytool` Keychain profile, and a dedicated Sparkle update key on the Mac you use for releases. Create the Sparkle key once and keep an encrypted offline backup. Sparkle exports the private key as plaintext, so write the export directly to encrypted storage outside the repository. Keep the same bundle identifier, Developer ID team, and Sparkle key for subsequent builds.
+## Use different settings for a mouse or app
+
+Open the menu in the settings toolbar that shows **All Devices & Apps** or the current mouse or app. Select a mouse to change its settings, or choose **Add App…** to set overrides for an app. App overrides apply while that app is in front.
+
+In an app's settings, turn on an **Override** switch to change that setting. Turn it off to use the mouse or **All Devices & Apps** setting again.
+
+## Map buttons and gestures
+
+1. In **Buttons & Gestures**, click **Press Button to Map…**.
+2. Press and release a middle, side, or supported Logitech button. Left and right clicks keep their usual behavior.
+3. Set **Click** for a press. To map a swipe, choose a direction such as **Hold and move left**.
+4. Hold the button and move the mouse in the direction you mapped.
+
+If an app uses its own Back or Forward keyboard shortcut, assign that shortcut in the app's button settings. To restore the mouse or default mapping, choose **Use inherited mapping**.
+
+For **Previous Space** and **Next Space**, enable the shortcuts to move left and right between Spaces. Find them under **Mission Control** in macOS **Keyboard Shortcuts**.
+
+## Check for updates
+
+In a release build, choose **Check for Updates…** from the menu bar. Miso checks automatically by default and asks before installing. To turn off automatic checks, use **Automatically check for updates** in **Status**. Local builds have updates turned off.
+
+## Publish a release
+
+### Set up release signing
+
+Use a public GitHub repository with a stable name for update downloads. Set up a Developer ID Application signing identity on your release Mac. If you need a notarization profile, run `notarytool` and follow its prompts.
+
+```sh
+xcrun notarytool store-credentials miso-notary
+```
+
+Create a dedicated Sparkle key once.
 
 ```sh
 swift package resolve
 .build/artifacts/sparkle/Sparkle/bin/generate_keys --account miso
 ```
 
-Set the version and increasing build number in `Scripts/Info.plist` and commit the release source. Set `MISO_SIGN_IDENTITY` and `MISO_NOTARY_PROFILE` in your release shell, then prepare the assets.
+The private key export is plaintext. To back it up, export directly to encrypted offline storage outside the repository.
 
 ```sh
-./Scripts/release.sh prepare OWNER/REPO
+.build/artifacts/sparkle/Sparkle/bin/generate_keys --account miso -x /path/to/encrypted-storage/miso-key
 ```
 
-Preparation builds, signs, notarizes and staples the app before creating the ZIP and signed appcast. Subsequent releases check the build number, Sparkle key, and Developer ID team against the public Latest release.
+Keep the bundle identifier, Developer ID team, and Sparkle key the same across releases. If you need to change the key, follow the [Sparkle key recovery instructions](https://sparkle-project.org/documentation/#rotating-signing-keys).
 
-### Stage and publish
+### Prepare a release
 
-Push the version tag at the commit used to prepare the assets, then stage a draft with the GitHub CLI authenticated.
+Set a three-part version and a higher integer build number in `Scripts/Info.plist`. Commit the changes. Replace `OWNER/REPO` with the public release repository and use your local signing identity and notarization profile name.
+
+For the first Sparkle release in the repository, add `--initial` to both `prepare` and `stage`.
 
 ```sh
-./Scripts/release.sh stage OWNER/REPO
+release_repo='OWNER/REPO'
+export MISO_SIGN_IDENTITY='Developer ID Application: YOUR NAME (TEAM_ID)'
+export MISO_NOTARY_PROFILE='miso-notary'
+swift test && ./Scripts/release.sh prepare "$release_repo"
 ```
 
-Pass `--initial` to both commands when creating the repository’s first Sparkle release. Staging verifies the tag, uploads both assets, and compares the downloaded draft files with the originals. If that comparison fails, leave the release unpublished. Remove the failed draft, keeping its tag, before staging again.
+The script signs and notarizes the app, then attaches the notarization ticket. It writes the ZIP and signed update feed, `appcast.xml`, to `dist/releases/VERSION`. To prepare the same unpublished version again, move that folder out of the way first.
 
-Publish the verified release as **Latest** and confirm its appcast and tagged ZIP download without authentication. Every release marked Latest needs both assets. Issue a higher build for corrections.
+### Stage a draft
 
-For Sparkle key rotation with verification before extraction, use Sparkle’s documented [Developer ID-signed DMG recovery path](https://sparkle-project.org/documentation/#rotating-signing-keys).
+Pushing a version tag to the public repository exposes the tagged source and its history. In the same shell, run these commands from the commit you used to prepare the release.
 
-## Implementation
+```sh
+version="$(plutil -extract CFBundleShortVersionString raw Scripts/Info.plist)"
+tag="v$version"
+gh auth status || gh auth login
+git tag "$tag"
+git push "https://github.com/$release_repo.git" "refs/tags/$tag"
+./Scripts/release.sh stage "$release_repo"
+```
 
-The app applies pointer settings on profile or device changes. Its dedicated input loop subscribes to wheel and button events when needed and enables motion observation only during a captured button interaction. Logitech commands run on separate queues. Miso writes a recovery record before temporarily taking over a Logitech control and checks the physical device identity and reporting state before restoring it.
+For later releases, the script checks the build number, Sparkle key, and Developer ID team against the current **Latest** release.
+
+Staging checks that the uploaded files match your local copies. If the check fails after creating a draft, confirm the release is still a draft. Delete the draft and keep its tag, then run `stage` again.
+
+```sh
+gh release delete "$tag" --repo "$release_repo"
+```
+
+### Publish the draft
+
+Publish the draft only after staging verifies both files. If a release marked **Latest** is missing either file, installed copies cannot update. Verify that both files download without signing in.
+
+```sh
+gh release edit "$tag" --repo "$release_repo" --draft=false --latest
+curl -qfsSL -o /dev/null "https://github.com/$release_repo/releases/latest/download/appcast.xml"
+curl -qfsSL -o /dev/null "https://github.com/$release_repo/releases/download/$tag/Miso-$version-arm64.zip"
+```
+
+To correct a published release, use a new version and a higher build number.
