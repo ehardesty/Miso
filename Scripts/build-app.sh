@@ -14,8 +14,9 @@ mkdir -p dist
 staging="$(mktemp -d "$(pwd)/dist/.build.XXXXXX")"
 trap 'rm -rf "$staging"' EXIT
 app="$staging/Miso.app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp Scripts/Info.plist "$app/Contents/Info.plist"
+cp assets/MisoMenuBar.svg assets/MisoAppIcon.icns "$app/Contents/Resources/"
 install -m 755 "$binary_dir/Miso" "$app/Contents/MacOS/Miso"
 codesign --force --sign "${MISO_SIGN_IDENTITY:--}" "$app"
 codesign --verify --strict "$app"

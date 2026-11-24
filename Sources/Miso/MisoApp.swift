@@ -6,9 +6,28 @@ import SwiftUI
 struct MisoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
+    private static let menuBarIcon: NSImage? = {
+        guard let url = Bundle.main.url(forResource: "MisoMenuBar", withExtension: "svg"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        image.size = NSSize(width: 20, height: 20)
+        image.isTemplate = true
+        return image
+    }()
+
     var body: some Scene {
-        MenuBarExtra("Miso", systemImage: "computermouse") {
+        MenuBarExtra {
             MenuBarControls(model: delegate.model)
+        } label: {
+            Label {
+                Text("Miso")
+            } icon: {
+                if let icon = Self.menuBarIcon {
+                    Image(nsImage: icon)
+                } else {
+                    Image(systemName: "computermouse")
+                }
+            }
+            .labelStyle(.iconOnly)
         }
 
         Window("Miso", id: "settings") {
