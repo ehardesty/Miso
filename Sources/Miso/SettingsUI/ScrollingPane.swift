@@ -7,6 +7,7 @@ struct ScrollingPane: View {
 
     var body: some View {
         Form {
+            SmoothScrollingSection(model: model, scope: scope)
             WheelSections(
                 model: model, scope: scope, title: "Vertical Wheel", symbol: "arrow.up.and.down",
                 axis: \.verticalWheel, overrides: \.verticalWheel,
@@ -17,7 +18,6 @@ struct ScrollingPane: View {
                 axis: \.horizontalWheel, overrides: \.horizontalWheel,
                 reverse: \.reverseHorizontal, reverseOverride: \.reverseHorizontal, showsNotes: false
             )
-            if scope == .global { SmoothScrollingSection(model: model) }
         }
         .formStyle(.grouped)
     }
