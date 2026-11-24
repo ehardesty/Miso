@@ -4,6 +4,7 @@ import SwiftUI
 
 struct StatusPane: View {
     @ObservedObject var model: SettingsModel
+    let updates: SoftwareUpdates?
 
     var body: some View {
         Form {
@@ -13,6 +14,9 @@ struct StatusPane: View {
                 }
                 .toggleStyle(.switch)
                 StartAtLoginRow()
+                if let updates {
+                    AutomaticUpdateChecksRow(updates: updates)
+                }
                 if let issue = model.logitechIssue {
                     Label(issue, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -55,6 +59,17 @@ struct StatusPane: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refreshPermissions()
         }
+    }
+}
+
+private struct AutomaticUpdateChecksRow: View {
+    @ObservedObject var updates: SoftwareUpdates
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { updates.automaticChecks }, set: updates.setAutomaticChecks)) {
+            Label("Automatically check for updates", systemImage: "arrow.clockwise")
+        }
+        .toggleStyle(.switch)
     }
 }
 

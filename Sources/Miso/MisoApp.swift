@@ -16,7 +16,7 @@ struct MisoApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarControls(model: delegate.model)
+            MenuBarControls(model: delegate.model, updates: delegate.updates)
         } label: {
             Label {
                 Text("Miso")
@@ -31,7 +31,7 @@ struct MisoApp: App {
         }
 
         Window("Miso", id: "settings") {
-            SettingsRootView(model: delegate.model)
+            SettingsRootView(model: delegate.model, updates: delegate.updates)
         }
         .defaultSize(width: 830, height: 640)
         .windowResizability(.contentMinSize)
@@ -40,6 +40,7 @@ struct MisoApp: App {
 
 private struct MenuBarControls: View {
     @ObservedObject var model: SettingsModel
+    let updates: SoftwareUpdates?
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -48,20 +49,34 @@ private struct MenuBarControls: View {
             openWindow(id: "settings")
             NSApp.activate(ignoringOtherApps: true)
         }
+        if let updates {
+            CheckForUpdatesButton(updates: updates)
+        }
         Divider()
         Button("Quit Miso") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
     }
 }
 
+private struct CheckForUpdatesButton: View {
+    @ObservedObject var updates: SoftwareUpdates
+
+    var body: some View {
+        Button("Check for Updates…", action: updates.check)
+            .disabled(!updates.canCheck)
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var model = SettingsModel()
+    lazy var updates = SoftwareUpdates(bundle: .main)
     private var terminating = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Start handling input even when the settings window is closed.
         _ = model
+        updates?.start()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

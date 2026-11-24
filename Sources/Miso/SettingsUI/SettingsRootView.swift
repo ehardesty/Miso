@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsRootView: View {
     @ObservedObject var model: SettingsModel
+    let updates: SoftwareUpdates?
     @State private var pane: SettingsPane? = .status
     @State private var scope: SettingsScope = .global
 
@@ -30,7 +31,7 @@ struct SettingsRootView: View {
 
     @ViewBuilder private var detail: some View {
         switch pane ?? .status {
-        case .status: StatusPane(model: model)
+        case .status: StatusPane(model: model, updates: updates)
         case .pointer: PointerPane(model: model, scope: scope)
         case .scrolling: ScrollingPane(model: model, scope: scope)
         case .buttons: ButtonsPane(model: model, scope: scope)
