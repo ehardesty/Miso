@@ -49,15 +49,16 @@ static const CGEventField MTSenderField = (CGEventField)87;
 
 uint64_t MTEventSender(CGEventRef event) {
     resolveOnce();
-    uint64_t id = 0;
-    if (copyHIDEvent && getSender) {
-        CFTypeRef input = copyHIDEvent(event);
-        if (input) {
-            id = getSender(input);
-            CFRelease(input);
-        }
-    }
-    return id != 0 ? id : (uint64_t)CGEventGetIntegerValueField(event, MTSenderField);
+    if (!copyHIDEvent || !getSender) return 0;
+    CFTypeRef input = copyHIDEvent(event);
+    if (!input) return 0;
+    const uint64_t id = getSender(input);
+    CFRelease(input);
+    return id;
+}
+
+uint64_t MTEventFieldSender(CGEventRef event) {
+    return (uint64_t)CGEventGetIntegerValueField(event, MTSenderField);
 }
 
 uint64_t MTReadScrollDevice(CGEventRef event, double *vertical, double *horizontal, uint64_t *timestampNanoseconds) {

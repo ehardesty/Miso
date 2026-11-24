@@ -21,7 +21,21 @@ public struct SmoothedAxis: Sendable {
 
     /// Whole pixels to post for a frame at `time`, capped per frame.
     public mutating func frame(at time: Double) -> Int32 {
-        let distance = animator.position(at: time) - posted
+        step(toward: animator.position(at: time))
+    }
+
+    /// Every remaining whole pixel at once, then stops. Used when display
+    /// frames stop arriving. The caller splits it into events.
+    public mutating func flush() -> Int {
+        let distance = (animator.target - posted).rounded(.towardZero)
+        let step = distance.isFinite ? Int(max(-1e12, min(1e12, distance))) : 0
+        posted += Double(step)
+        animator.stop(at: posted)
+        return step
+    }
+
+    private mutating func step(toward position: Double) -> Int32 {
+        let distance = position - posted
         guard distance.isFinite else { return 0 }
         let step = min(10_000, max(-10_000, distance)).rounded(.towardZero)
         posted += step

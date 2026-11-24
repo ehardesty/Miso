@@ -369,12 +369,12 @@ final class InputService {
         case .scrollWheel:
             return transformWheel(event) ? nil : event
         case .otherMouseDown:
-            guard let key = buttonKey(event, sender: MTEventSender(event)) else { return event }
+            guard let key = buttonKey(event, sender: sender(of: event)) else { return event }
             let result = press(key, flags: event.flags, location: event.location, native: event)
             updateMotion()
             return result
         case .otherMouseUp:
-            guard let key = buttonKey(event, sender: MTEventSender(event)) else { return event }
+            guard let key = buttonKey(event, sender: sender(of: event)) else { return event }
             let result = release(key, location: event.location, native: event)
             thread.enqueue { [self] in refreshTaps() }
             return result
@@ -383,6 +383,16 @@ final class InputService {
         default:
             return event
         }
+    }
+
+    /// Some side buttons arrive without an attached HID event but keep their
+    /// sender in Quartz field 87. That value counts only when it names a
+    /// known mouse, so other events keep the senderless fallback below.
+    private func sender(of event: CGEvent) -> UInt64 {
+        let attached = MTEventSender(event)
+        if attached != 0 { return attached }
+        let recorded = MTEventFieldSender(event)
+        return context.mouseSenders[recorded] != nil ? recorded : 0
     }
 
     private func buttonKey(_ event: CGEvent, sender: UInt64) -> ButtonKey? {
@@ -478,7 +488,7 @@ final class InputService {
     }
 
     private func move(_ event: CGEvent) -> CGEvent? {
-        let sender = MTEventSender(event)
+        let sender = sender(of: event)
         let device = context.mouseSenders[sender] ?? (sender == 0 ? soleMouse() : nil)
         guard let device else { return event }
 
@@ -558,6 +568,8 @@ final class InputService {
         let sender = MTReadScrollDevice(event, &rawVertical, &rawHorizontal, &eventTime)
         guard let device = context.mouseSenders[sender], let profile = profiles[device] else {
             wheelProbe?.record(.unknownMouse)
+            // Scrolling from another device passes through and ends the glide on its axes.
+            smoother.cancel(movedBy: event)
             return false
         }
         let changesWheel = profile.changesWheel

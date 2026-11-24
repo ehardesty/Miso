@@ -9,6 +9,8 @@ final class SmoothScroller: NSObject {
     private static let modifierFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
     /// Longer than any frame interval. A running link that misses it has stopped delivering frames.
     private static let stallInterval = 0.25
+    /// The most pixels one posted event carries.
+    private static let maximumStep = 10_000
 
     private var settings = ScrollSmoothing()
     private var vertical = SmoothedAxis(glide: ScrollSmoothing.defaultGlide)
@@ -24,6 +26,10 @@ final class SmoothScroller: NSObject {
     private var lastFrame = 0.0
     /// Set when frames stopped arriving. Input passes through until a frame proves the link works.
     private var stalled = false
+    /// Checks for missing frames during a glide, independently of the display
+    /// link and of wheel input. It exists only while a glide runs, so an idle
+    /// input thread sleeps.
+    private var watchdog: Timer?
 
     var isActive: Bool { settings.isOn && link != nil }
 
@@ -41,11 +47,46 @@ final class SmoothScroller: NSObject {
     func attach(_ link: CADisplayLink) {
         let running = self.link?.isPaused == false
         self.link?.invalidate()
-        link.isPaused = !running
-        lastFrame = CACurrentMediaTime()
+        link.isPaused = true
         stalled = false
         link.add(to: .current, forMode: .default)
         self.link = link
+        setRunning(running)
+    }
+
+    /// Starts or pauses frames, and the watchdog with them. The watchdog's
+    /// first check comes one stall interval after the glide starts.
+    private func setRunning(_ running: Bool) {
+        guard let link else { return }
+        if running && link.isPaused {
+            lastFrame = CACurrentMediaTime()
+            let timer = Timer(timeInterval: Self.stallInterval, repeats: true) { [weak self] _ in
+                self?.expireIfStalled()
+            }
+            RunLoop.current.add(timer, forMode: .default)
+            watchdog?.invalidate()
+            watchdog = timer
+        } else if !running {
+            watchdog?.invalidate()
+            watchdog = nil
+        }
+        link.isPaused = !running
+    }
+
+    /// Wheel input, frames, and the watchdog share this check. When a running
+    /// link has gone a stall interval without a frame, the rest of the glide
+    /// posts at once, so no step is lost. Input then passes through until a
+    /// frame proves the link works again.
+    @discardableResult
+    private func expireIfStalled() -> Bool {
+        guard let link, !link.isPaused, !stalled,
+              CACurrentMediaTime() - lastFrame > Self.stallInterval else { return false }
+        post(vertical.flush(), horizontal.flush())
+        stalled = true
+        // The link keeps running so a working link can clear the stall.
+        watchdog?.invalidate()
+        watchdog = nil
+        return true
     }
 
     func configure(_ settings: ScrollSmoothing) {
@@ -54,19 +95,14 @@ final class SmoothScroller: NSObject {
         stalled = false
         vertical = SmoothedAxis(glide: settings.glide)
         horizontal = SmoothedAxis(glide: settings.glide)
-        link?.isPaused = true
+        setRunning(false)
     }
 
     /// Returns true when the wheel event was consumed.
     func consume(_ event: CGEvent) -> Bool {
         guard isActive, let link else { return false }
         let now = CACurrentMediaTime()
-        if !link.isPaused && now - lastFrame > Self.stallInterval {
-            stop()
-            stalled = true
-            // Keep the link running so a working link can clear the stall.
-            link.isPaused = false
-        }
+        expireIfStalled()
         // Pass input through rather than swallow it while frames are missing.
         // A cancel may have paused the link, so keep it running until a frame
         // proves it works.
@@ -86,10 +122,7 @@ final class SmoothScroller: NSObject {
         guard vertical != 0 || horizontal != 0 else { return false }
         self.vertical.add(vertical * ScrollSmoothing.pixelsPerLine, at: now)
         self.horizontal.add(horizontal * ScrollSmoothing.pixelsPerLine, at: now)
-        if link.isPaused {
-            lastFrame = now
-            link.isPaused = false
-        }
+        setRunning(true)
         return true
     }
 
@@ -97,7 +130,7 @@ final class SmoothScroller: NSObject {
     func stop() {
         vertical.stop()
         horizontal.stop()
-        link?.isPaused = true
+        setRunning(false)
     }
 
     /// Ends the glide on each axis the event moves. The other axis keeps its
@@ -110,26 +143,39 @@ final class SmoothScroller: NSObject {
     }
 
     func invalidate() {
+        watchdog?.invalidate()
+        watchdog = nil
         link?.invalidate()
         link = nil
     }
 
     @objc private func frame(_ link: CADisplayLink) {
+        // A late frame first settles a stall the same way the watchdog would.
+        expireIfStalled()
         lastFrame = CACurrentMediaTime()
         stalled = false
         // The frame's start time, not its future display time, so input that
         // arrives after this callback is never later than the sample and is
         // never delayed by a refresh-dependent amount.
         let time = link.timestamp
-        let dy = vertical.frame(at: time)
-        let dx = horizontal.frame(at: time)
-        // New events carry the current cursor location, so the cursor stays free.
-        if dy != 0 || dx != 0, let event = CGEvent(
-            scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0
-        ) {
+        post(Int(vertical.frame(at: time)), Int(horizontal.frame(at: time)))
+        if vertical.isDrained(at: time) && horizontal.isDrained(at: time) { setRunning(false) }
+    }
+
+    /// Posts the distance in events of at most `maximumStep` pixels per axis.
+    private func post(_ dy: Int, _ dx: Int) {
+        var remaining = (dy, dx)
+        while remaining.0 != 0 || remaining.1 != 0 {
+            let y = max(-Self.maximumStep, min(Self.maximumStep, remaining.0))
+            let x = max(-Self.maximumStep, min(Self.maximumStep, remaining.1))
+            remaining = (remaining.0 - y, remaining.1 - x)
+            // New events carry the current cursor location, so the cursor stays free.
+            guard let event = CGEvent(
+                scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2,
+                wheel1: Int32(y), wheel2: Int32(x), wheel3: 0
+            ) else { return }
             ActionDelivery.post(event)
         }
-        if vertical.isDrained(at: time) && horizontal.isDrained(at: time) { link.isPaused = true }
     }
 
     /// Line distance, using the same fallbacks as the wheel transform.

@@ -131,3 +131,32 @@ func aStepRespondsTheSameWhetherOrNotTheLastGlideHasSettled(gap: Double) {
     #expect(large.isSettled(at: 0.0851))
     #expect(abs(large.position(at: 0.0851) - 480) < 0.001)
 }
+
+/// A step during a shortened glide keeps the current speed instead of
+/// lengthening the curve and slowing down.
+@Test func aStepDuringALargeMoveKeepsItsSpeed() {
+    var animator = ScrollAnimator(glide: 0.2)
+    animator.add(400, at: 0)
+    // Sample in time order. The animator's clock only moves forward.
+    let earlier = animator.position(at: 0.079)
+    let here = animator.position(at: 0.08)
+    animator.add(50, at: 0.08)
+    let later = animator.position(at: 0.081)
+    #expect(here - earlier > 0)
+    // The 1 ms averages straddle a decelerating curve, so allow a few percent.
+    #expect(later - here >= (here - earlier) * 0.95)
+}
+
+@Test func flushingFinishesTheRemainingTravelAtOnce() {
+    var axis = SmoothedAxis(glide: 0.2)
+    axis.add(400, at: 0)
+    let first = axis.frame(at: 0.016)
+    #expect(first > 0 && first < 400)
+    #expect(Int(first) + axis.flush() == 400)
+    #expect(axis.frame(at: 5) == 0)
+
+    // Travel beyond one event's cap is still delivered in full.
+    var large = SmoothedAxis(glide: 0.2)
+    for step in 0..<8 { large.add(1_600, at: Double(step) * 0.001) }
+    #expect(large.flush() == 12_800)
+}

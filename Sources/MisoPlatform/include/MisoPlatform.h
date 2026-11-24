@@ -8,6 +8,8 @@
 CF_ASSUME_NONNULL_BEGIN
 
 uint64_t MTEventSender(CGEventRef event);
+/// The sender recorded in Quartz field 87. Present on some events without an attached IOHIDEvent.
+uint64_t MTEventFieldSender(CGEventRef event);
 uint64_t MTReadScrollDevice(CGEventRef event, double *vertical, double *horizontal, uint64_t *timestampNanoseconds);
 CFArrayRef _Nullable MTCopyMouseServices(void) CF_RETURNS_RETAINED;
 uint64_t MTServiceRegistryID(CFTypeRef service);

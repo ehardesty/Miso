@@ -131,6 +131,12 @@ public struct ScrollAnimator: Sendable {
         target += distance
         let span = target - from
         duration = Self.duration(glide: glide, move: span)
+        // A longer curve than 3× span ÷ speed would have to slow down to avoid
+        // overshooting. Shortening it keeps the inherited speed, as in Chrome.
+        if speed * span > 0 {
+            let keepsSpeed = 3 * span / speed
+            duration = min(duration, max(glide * Self.shortestGlideFraction, keepsSpeed))
+        }
         // As the previous glide runs out, start no slower than this step's own
         // ease-out, so a step just before or just after settling responds alike.
         let remaining = abs(span - distance)
