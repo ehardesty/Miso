@@ -3,11 +3,23 @@ import IOKit
 import IOKit.hid
 import MisoCore
 
+protocol LogitechTransport: AnyObject {
+    var product: Int { get }
+    var location: Int? { get }
+    var name: String { get }
+    var serial: String? { get }
+    var transport: String { get }
+    var isBolt: Bool { get }
+
+    func command(slot: UInt8, feature: UInt8, function: UInt8, payload: [UInt8], timeout: TimeInterval) -> [UInt8]?
+    func receiverRegister(write: [UInt8]?) -> [UInt8]?
+}
+
 /// One serial command lane for a Logitech vendor HID collection. The IOKit
 /// callback never waits for the command lane, and unrelated reports are ignored.
 // Transport state is protected by lock or confined to queue. IOKit callback
 // registration and the notification handler are confined to the main run loop.
-final class HIDEndpoint: @unchecked Sendable {
+final class HIDEndpoint: LogitechTransport, @unchecked Sendable {
     private final class Pending {
         let request: HIDPPFrame
         let direct: Bool
@@ -120,8 +132,7 @@ final class HIDEndpoint: @unchecked Sendable {
     deinit { reportBuffer.deallocate() }
 
     func command(
-        slot: UInt8, feature: UInt8, function: UInt8, payload: [UInt8] = [],
-        timeout: TimeInterval = 0.45
+        slot: UInt8, feature: UInt8, function: UInt8, payload: [UInt8], timeout: TimeInterval
     ) -> [UInt8]? {
         dispatchPrecondition(condition: .onQueue(queue))
         guard let softwareID = nextSoftwareID() else { return nil }
@@ -133,7 +144,7 @@ final class HIDEndpoint: @unchecked Sendable {
 
     /// Bolt receiver notifications use HID++ 1.0 instead of the paired
     /// device's HID++ 2.0 feature table. The register byte has no software ID.
-    func receiverRegister(write: [UInt8]? = nil) -> [UInt8]? {
+    func receiverRegister(write: [UInt8]?) -> [UInt8]? {
         dispatchPrecondition(condition: .onQueue(queue))
         guard isBolt, supportsShortReport else { return nil }
         let data = write ?? [0, 0, 0]

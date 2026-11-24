@@ -23,6 +23,7 @@ Use one mouse remapping utility at a time. macOS may ask for permissions again a
 ## Tune your mouse
 
 Use **Pointer** to set tracking speed and acceleration. For a mouse with adjustable DPI, use **Sensor Resolution** to change how far the pointer moves for the same physical movement.
+Miso remembers the resolution after the mouse confirms your change. While Miso is enabled, it restores that resolution when the mouse reconnects.
 
 In **Scrolling**, set the direction and **Wheel mode** for the vertical and horizontal wheels separately. Each mode remembers its settings when you switch away.
 

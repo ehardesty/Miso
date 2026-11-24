@@ -2,23 +2,33 @@ import Foundation
 import IOKit
 import IOKit.hid
 import MisoCore
+import os
 
 @MainActor
 final class LogitechDevices {
+    enum DPIChangeResult {
+        case verified, busy, unavailable, unverified(actual: Int?)
+    }
+
+    private enum DiscoveryRetry: Sendable {
+        case missingMice, missingMiceOrDPI
+    }
+
     private struct Connection: Sendable {
         let endpoint: HIDEndpoint
         let session: LogitechSession
         var mice: [LogitechMouse] = []
         var scanning = false
         var needsScan = false
-        var retryMissingAfterScan = false
+        var retryAfterScan: DiscoveryRetry?
         var applying = false
         var policyChanged = false
         var unknownSlotProbe: [UInt8: UInt64] = [:]
         var nonMouseSlots: Set<UInt8> = []
         var knownMouseSlots: Set<UInt8> = []
 
-        var hasMissingMice: Bool {
+        func needsDiscoveryRetry(includingDPI: Bool) -> Bool {
+            if includingDPI && mice.contains(where: \.needsDPIRestore) { return true }
             if !endpoint.isBolt {
                 guard nonMouseSlots.isEmpty, endpoint.hasMouseUsage || !knownMouseSlots.isEmpty else { return false }
             }
@@ -33,6 +43,7 @@ final class LogitechDevices {
     var onCancel: ((String) -> Void)?
 
     private let journal: ControlJournal
+    private let dpiRestorationEnabled = OSAllocatedUnfairLock(initialState: true)
     private var manager: IOHIDManager?
     private var connections: [UInt64: Connection] = [:]
     private var held: [String: Set<UInt16>] = [:]
@@ -99,21 +110,36 @@ final class LogitechDevices {
         for id in Array(connections.keys) { scan(id) }
     }
 
-    func retryMissingMice() {
+    func retryIncompleteDiscovery(includingDPI: Bool) {
+        let retryDPI = includingDPI && dpiRestorationEnabled.withLock { $0 }
         for id in Array(connections.keys) {
-            guard let connection = connections[id], connection.hasMissingMice else { continue }
+            guard let connection = connections[id] else { continue }
             if connection.scanning {
-                connections[id]?.retryMissingAfterScan = true
-            } else {
+                let retry = retryDPI ? .missingMiceOrDPI : (connection.retryAfterScan ?? .missingMice)
+                connections[id]?.retryAfterScan = retry
+            } else if connection.needsDiscoveryRetry(includingDPI: retryDPI) {
                 scan(id)
             }
         }
     }
 
-    func recheckButtonRouting() {
+    func setDPIRestorationEnabled(_ enabled: Bool) {
+        let justEnabled = dpiRestorationEnabled.withLock { current in
+            let justEnabled = enabled && !current
+            current = enabled
+            return justEnabled
+        }
+        guard justEnabled else { return }
+        for (id, connection) in connections where connection.mice.contains(where: { $0.preferredDPI != nil }) {
+            scan(id)
+        }
+    }
+
+    func recheckMouseSettings() {
+        let restoreDPI = dpiRestorationEnabled.withLock { $0 }
         let ids = connections.compactMap { id, connection -> UInt64? in
             guard !connection.scanning, connection.mice.contains(where: {
-                !$0.captured.isEmpty || $0.unavailableControls
+                (restoreDPI && $0.preferredDPI != nil) || !$0.captured.isEmpty || $0.unavailableControls
             }) else { return nil }
             return id
         }
@@ -139,8 +165,8 @@ final class LogitechDevices {
         }
         cancel(connection.mice)
         connections[id]?.scanning = true
-        connection.endpoint.queue.async { [weak self] in
-            let inventory = connection.session.discover()
+        connection.endpoint.queue.async { [weak self, dpiRestorationEnabled] in
+            let inventory = connection.session.discover { dpiRestorationEnabled.withLock { $0 } }
             DispatchQueue.main.async {
                 guard let self, self.connections[id]?.endpoint === connection.endpoint else { return }
                 let foundSlots = Set(inventory.mice.map(\.slot))
@@ -152,8 +178,10 @@ final class LogitechDevices {
                 self.publish(inventory.mice, for: id)
                 guard let current = self.connections[id] else { return }
                 self.connections[id]?.needsScan = false
-                self.connections[id]?.retryMissingAfterScan = false
-                if !self.suspended, current.needsScan || (current.retryMissingAfterScan && current.hasMissingMice) {
+                self.connections[id]?.retryAfterScan = nil
+                let retryDPI = current.retryAfterScan == .missingMiceOrDPI && self.dpiRestorationEnabled.withLock { $0 }
+                let retryDiscovery = current.retryAfterScan != nil && current.needsDiscoveryRetry(includingDPI: retryDPI)
+                if !self.suspended, current.needsScan || retryDiscovery {
                     self.scan(id)
                 } else {
                     self.applyPolicy(id)
@@ -190,12 +218,16 @@ final class LogitechDevices {
         }
     }
 
-    func setDPI(_ requested: Int, deviceID: String, completion: @escaping (Int?, Bool) -> Void) {
-        guard !closing, !suspended,
+    func setDPI(_ requested: Int, deviceID: String, completion: @escaping (DPIChangeResult) -> Void) {
+        guard !closing,
               let connection = connections.values.first(where: { entry in
                   entry.mice.contains { $0.descriptor.id == deviceID }
-              }), !connection.scanning else {
-            completion(nil, false)
+              }) else {
+            completion(.unavailable)
+            return
+        }
+        guard !suspended, !connection.scanning else {
+            completion(.busy)
             return
         }
         let id = connection.endpoint.registryID
@@ -204,11 +236,11 @@ final class LogitechDevices {
             let devices = connection.session.mice
             DispatchQueue.main.async {
                 guard let self, self.connections[id]?.endpoint === connection.endpoint else {
-                    completion(nil, false)
+                    completion(.unavailable)
                     return
                 }
                 self.publish(devices, for: id)
-                completion(result.actual, result.success)
+                completion(result.success ? .verified : .unverified(actual: result.actual))
             }
         }
     }
@@ -231,8 +263,9 @@ final class LogitechDevices {
         if isBoltSlot, frame.feature == 0x41, frame.address == 0x10 {
             // Bolt connection notifications encode device kind in the next byte.
             // Known non-pointer kinds can share the receiver without restarting mouse capture.
-            let kind = frame.payload.first.map { $0 & 0x0F }
-            let nonPointerKind = kind.map { [1, 3, 4, 7, 9, 10, 11, 12, 13].contains($0) } ?? false
+            guard let deviceInfo = frame.payload.first else { return }
+            let nonPointerKind = [1, 3, 4, 7, 9, 10, 11, 12, 13].contains(deviceInfo & 0x0F)
+            let linkEstablished = deviceInfo & 0x40 == 0
             if nonPointerKind && !connection.mice.contains(where: { $0.slot == frame.device }) {
                 connections[id]?.nonMouseSlots.insert(frame.device)
                 connections[id]?.knownMouseSlots.remove(frame.device)
@@ -241,6 +274,7 @@ final class LogitechDevices {
             connections[id]?.nonMouseSlots.remove(frame.device)
             connections[id]?.unknownSlotProbe[frame.device] = nil
             scan(id)
+            if linkEstablished { onTopology?() }
             return
         }
         guard let mouse = connection.mice.first(where: {
@@ -254,12 +288,13 @@ final class LogitechDevices {
             scan(id)
             return
         }
-        guard !connection.scanning else { return }
         if frame.feature == mouse.reconnectFeature {
             scan(id)
+            onTopology?()
             return
         }
-        guard frame.feature == mouse.buttonFeature, frame.address == 0, !mouse.captured.isEmpty else { return }
+        guard !connection.scanning, frame.feature == mouse.buttonFeature, frame.address == 0,
+              !mouse.captured.isEmpty else { return }
 
         let device = mouse.descriptor.id
         var next = Set<UInt16>()

@@ -1,5 +1,6 @@
 import Foundation
 import MisoCore
+import os
 
 struct LogitechMouse: Equatable, Sendable {
     var descriptor: MouseDevice
@@ -9,6 +10,8 @@ struct LogitechMouse: Equatable, Sendable {
     let slot: UInt8
     let buttonFeature: UInt8?
     let reconnectFeature: UInt8?
+    var preferredDPI: Int?
+    var needsDPIRestore = false
     var captured: Set<UInt16> = []
     var unavailableControls = false
 }
@@ -20,6 +23,8 @@ struct LogitechInventory: Sendable {
 
 /// Keeps mutable HID++ state on the endpoint's command queue, outside the event tap.
 final class LogitechSession: @unchecked Sendable {
+    private static let logger = Logger(subsystem: "dev.mousetweaks.MouseTweaks", category: "DPI")
+
     private struct Route {
         var mouse: LogitechMouse
         let identityIndex: UInt8
@@ -27,17 +32,19 @@ final class LogitechSession: @unchecked Sendable {
         let controls: Set<UInt16>
     }
 
-    private let endpoint: HIDEndpoint
+    private let endpoint: any LogitechTransport
     private let journal: ControlJournal
+    private let defaults: UserDefaults
     private var routes: [UInt8: Route] = [:]
     private var receiverNotificationWrite: [UInt8]?
 
-    init(endpoint: HIDEndpoint, journal: ControlJournal) {
+    init(endpoint: any LogitechTransport, journal: ControlJournal, defaults: UserDefaults = .standard) {
         self.endpoint = endpoint
         self.journal = journal
+        self.defaults = defaults
     }
 
-    func discover() -> LogitechInventory {
+    func discover(shouldRestoreDPI: () -> Bool) -> LogitechInventory {
         // Existing leases are recovered before replacing any session; receiver
         // slots can be reassigned without unplugging the receiver.
         for slot in routes.keys { clear(slot: slot) }
@@ -48,12 +55,21 @@ final class LogitechSession: @unchecked Sendable {
         let discovered = slots.compactMap { probe(slot: $0, nonMouseSlots: &nonMouseSlots) }
         routes = Dictionary(uniqueKeysWithValues: discovered.map { ($0.mouse.slot, $0) })
 
-        for slot in routes.keys { clear(slot: slot) }
+        for slot in routes.keys {
+            clear(slot: slot)
+            guard let mouse = routes[slot]?.mouse, mouse.needsDPIRestore, let preferredDPI = mouse.preferredDPI,
+                  shouldRestoreDPI() else { continue }
+            let previous = mouse.descriptor.dpi.map { String($0.current) } ?? "unavailable"
+            let observed = writeDPI(preferredDPI, slot: slot)
+            if observed == preferredDPI { routes[slot]?.mouse.needsDPIRestore = false }
+            let readback = observed.map(String.init) ?? "unverified"
+            Self.logger.notice("DPI restore requested \(preferredDPI, privacy: .public), previously \(previous, privacy: .public), readback \(readback, privacy: .public)")
+        }
         return LogitechInventory(mice: mice, nonMouseSlots: nonMouseSlots)
     }
 
     private func enableReceiverNotifications() {
-        guard endpoint.isBolt, var flags = endpoint.receiverRegister(), flags.count == 3,
+        guard endpoint.isBolt, var flags = endpoint.receiverRegister(write: nil), flags.count == 3,
               flags[1] & 1 == 0 else { return }
         // Change only the wireless-event bit in the 24-bit receiver
         // notification register. Unknown bits and other tools' bits remain.
@@ -65,7 +81,7 @@ final class LogitechSession: @unchecked Sendable {
     func shutdown() {
         _ = configure([:])
         guard let written = receiverNotificationWrite,
-              var current = endpoint.receiverRegister(), current == written else { return }
+              var current = endpoint.receiverRegister(write: nil), current == written else { return }
         current[1] &= ~UInt8(1)
         _ = endpoint.receiverRegister(write: current)
     }
@@ -85,8 +101,10 @@ final class LogitechSession: @unchecked Sendable {
         let buttons = features.feature(0x1B04)
         let controls = Set(buttons.map(features.controls) ?? [])
         let reconnect = features.feature(0x1D4B)
+        let deviceID = "logitech:" + identity
+        let preferredDPI = defaults.object(forKey: Self.dpiPreferenceKey(deviceID)) as? Int
         let mouse = MouseDevice(
-            id: "logitech:" + identity, name: name, transport: endpoint.isBolt ? "Logi Bolt" : endpoint.transport,
+            id: deviceID, name: name, transport: endpoint.isBolt ? "Logi Bolt" : endpoint.transport,
             dpi: dpi?.capability, buttons: (0..<5).map { .standard(UInt8($0)) } + controls.sorted().map(MouseButton.logitech)
         )
         return Route(
@@ -94,7 +112,9 @@ final class LogitechSession: @unchecked Sendable {
                 descriptor: mouse,
                 directProduct: endpoint.isBolt ? nil : endpoint.product,
                 location: endpoint.location, serial: endpoint.serial, slot: slot,
-                buttonFeature: buttons, reconnectFeature: reconnect
+                buttonFeature: buttons, reconnectFeature: reconnect,
+                preferredDPI: preferredDPI,
+                needsDPIRestore: preferredDPI.map { dpi?.needsRestore(to: $0) ?? true } ?? false
             ),
             identityIndex: identityIndex, dpi: dpi, controls: controls
         )
@@ -103,22 +123,31 @@ final class LogitechSession: @unchecked Sendable {
     var mice: [LogitechMouse] { routes.values.map(\.mouse).sorted { $0.slot < $1.slot } }
 
     func writeDPI(_ requested: Int, deviceID: String) -> (actual: Int?, success: Bool) {
-        guard var route = routes.values.first(where: { $0.mouse.descriptor.id == deviceID }),
-              let dpi = route.dpi, let capability = route.mouse.descriptor.dpi,
-              capability.supports(requested) else { return (nil, false) }
-        let features = LogitechFeatures(endpoint: endpoint, slot: route.mouse.slot)
-        guard matches(route, features: features) else { return (nil, false) }
-        let observed = dpi.write(requested, on: features)
-        if let observed {
-            let old = route.mouse.descriptor
-            route.mouse.descriptor = MouseDevice(
-                id: old.id, name: old.name, transport: old.transport,
-                dpi: MouseDPI(current: observed, minimum: capability.minimum, maximum: capability.maximum,
-                              step: capability.step, values: capability.values), buttons: old.buttons
-            )
-            routes[route.mouse.slot] = route
+        guard let slot = routes.first(where: { $0.value.mouse.descriptor.id == deviceID })?.key else {
+            return (nil, false)
         }
-        return (observed, observed == requested)
+        let observed = writeDPI(requested, slot: slot)
+        let success = observed == requested
+        if success {
+            defaults.set(requested, forKey: Self.dpiPreferenceKey(deviceID))
+            routes[slot]?.mouse.preferredDPI = requested
+            routes[slot]?.mouse.needsDPIRestore = false
+        }
+        return (observed, success)
+    }
+
+    private func writeDPI(_ requested: Int, slot: UInt8) -> Int? {
+        guard var route = routes[slot], let dpi = route.dpi, dpi.capability.supports(requested) else { return nil }
+        let features = LogitechFeatures(endpoint: endpoint, slot: slot)
+        guard matches(route, features: features) else { return nil }
+        guard let observed = dpi.write(requested, on: features) else { return nil }
+        route.mouse.descriptor.dpi?.current = observed
+        routes[slot] = route
+        return observed
+    }
+
+    private static func dpiPreferenceKey(_ deviceID: String) -> String {
+        "Miso.DPI.\(deviceID)"
     }
 
     func configure(_ policy: [String: Set<UInt16>]) -> [LogitechMouse] {

@@ -1,7 +1,6 @@
 import MisoCore
 import SwiftUI
 
-/// Hardware DPI is a device property, so it is written immediately rather than stored per profile.
 struct DPIRow: View {
     @ObservedObject var model: SettingsModel
     let device: MouseDevice

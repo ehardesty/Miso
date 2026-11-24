@@ -8,6 +8,7 @@ struct LogitechDPI {
 
     private let feature: Feature
     let capability: MouseDPI
+    private let currentY: UInt16?
 
     static func discover(on device: LogitechFeatures) -> Self? {
         if let index = device.feature(0x2201),
@@ -15,7 +16,7 @@ struct LogitechDPI {
            let data = device.call(index, 1, [0]), let values = DPICapability.parseList(data),
            let current = currentDPI(device.call(index, 2, [0])),
            let capability = capability(values, current: current) {
-            return Self(feature: .adjustable(index: index), capability: capability)
+            return Self(feature: .adjustable(index: index), capability: capability, currentY: nil)
         }
         guard let index = device.feature(0x2202),
               (device.call(index, 0)?.first ?? 0) > 0,
@@ -35,8 +36,14 @@ struct LogitechDPI {
         guard let capability = capability(values, current: current) else { return nil }
         return Self(
             feature: .extended(index: index, hasY: hasY, hasLiftOff: sensor[2] & 2 != 0),
-            capability: capability
+            capability: capability,
+            currentY: hasY ? HIDPPFrame.word(parameters, at: 5) : nil
         )
+    }
+
+    func needsRestore(to requested: Int) -> Bool {
+        guard capability.supports(requested) else { return false }
+        return capability.current != requested || currentY.map { Int($0) != requested } == true
     }
 
     func write(_ requested: Int, on device: LogitechFeatures) -> Int? {

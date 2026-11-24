@@ -14,6 +14,9 @@ final class SettingsModel: ObservableObject {
         didSet {
             guard oldValue != settings else { return }
             SettingsStore.save(settings)
+            if oldValue.enabled != settings.enabled {
+                logitech.setDPIRestorationEnabled(settings.enabled)
+            }
             apply()
         }
     }
@@ -37,7 +40,7 @@ final class SettingsModel: ObservableObject {
     private var observers: [NSObjectProtocol] = []
     private var unlockObserver: NSObjectProtocol?
     private var deviceRefresh: Task<Void, Never>?
-    private var recheckRoutingOnRefresh = false
+    private var recheckSettingsOnRefresh = false
     private var sleeping = false
     private var terminating = false
 
@@ -52,6 +55,7 @@ final class SettingsModel: ObservableObject {
 
     init() {
         settings = SettingsStore.load()
+        logitech.setDPIRestorationEnabled(settings.enabled)
         frontmostApp = NSWorkspace.shared.frontmostApplication
 
         input.onStatus = { [weak self] status in
@@ -157,10 +161,27 @@ final class SettingsModel: ObservableObject {
 
     func setDPI(_ dpi: Int, for deviceID: String) {
         dpiError = nil
-        logitech.setDPI(dpi, deviceID: deviceID) { [weak self] actual, success in
-            guard !success else { return }
-            self?.dpiError = actual.map { "The mouse reported \($0) DPI after the change." }
-                ?? "The DPI change could not be verified. Reconnect the mouse and try again."
+        logitech.setDPI(dpi, deviceID: deviceID) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .verified:
+                self.dpiError = nil
+            case .busy:
+                self.dpiError = "Miso is checking the mouse. Try changing the DPI again in a moment."
+            case .unavailable:
+                self.dpiError = "The mouse is unavailable. Reconnect it and try again."
+            case .unverified(let actual):
+                let failure = actual.map { "Couldn’t set \(dpi) DPI. The mouse reported \($0) DPI." }
+                    ?? "Couldn’t verify the change to \(dpi) DPI."
+                guard let saved = self.logitech.mice.first(where: { $0.descriptor.id == deviceID })?.preferredDPI else {
+                    self.dpiError = failure
+                    return
+                }
+                let savedSetting = self.settings.enabled
+                    ? "Miso will try to restore \(saved) DPI when the mouse reconnects. Try again to keep \(dpi) DPI."
+                    : "This mouse still has \(saved) DPI saved in Miso."
+                self.dpiError = "\(failure) \(savedSetting)"
+            }
         }
     }
 
@@ -179,13 +200,17 @@ final class SettingsModel: ObservableObject {
     }
 
     func refreshPermissions() {
+        refreshPermissions(retryDPI: false)
+    }
+
+    private func refreshPermissions(retryDPI: Bool) {
         let ax = AXIsProcessTrusted()
         let inputAllowed = CGPreflightListenEventAccess()
         if accessibilityAllowed != ax { accessibilityAllowed = ax }
         if inputMonitoringAllowed != inputAllowed { inputMonitoringAllowed = inputAllowed }
         if inputAllowed {
             logitech.start()
-            logitech.retryMissingMice()
+            logitech.retryIncompleteDiscovery(includingDPI: retryDPI)
         }
         pointer.recheck()
         refreshMice()
@@ -251,7 +276,7 @@ final class SettingsModel: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.recheckRoutingOnRefresh = true
+                self.recheckSettingsOnRefresh = true
                 self.scheduleDeviceRefresh()
             }
         }
@@ -265,10 +290,10 @@ final class SettingsModel: ObservableObject {
             for delay in [Duration.milliseconds(300), .seconds(1)] {
                 try? await Task.sleep(for: delay)
                 guard !Task.isCancelled, let self, !self.sleeping, !self.terminating else { return }
-                self.refreshPermissions()
-                guard self.recheckRoutingOnRefresh else { continue }
-                self.recheckRoutingOnRefresh = false
-                if self.inputMonitoringAllowed { self.logitech.recheckButtonRouting() }
+                self.refreshPermissions(retryDPI: true)
+                guard self.recheckSettingsOnRefresh else { continue }
+                self.recheckSettingsOnRefresh = false
+                if self.inputMonitoringAllowed { self.logitech.recheckMouseSettings() }
             }
         }
     }

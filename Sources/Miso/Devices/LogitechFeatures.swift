@@ -2,7 +2,7 @@ import Foundation
 import MisoCore
 
 struct LogitechFeatures {
-    let endpoint: HIDEndpoint
+    let endpoint: any LogitechTransport
     let slot: UInt8
 
     func feature(_ id: UInt16, timeout: TimeInterval = 0.45) -> UInt8? {
@@ -13,7 +13,7 @@ struct LogitechFeatures {
     }
 
     func call(_ index: UInt8, _ function: UInt8, _ payload: [UInt8] = []) -> [UInt8]? {
-        endpoint.command(slot: slot, feature: index, function: function, payload: payload)
+        endpoint.command(slot: slot, feature: index, function: function, payload: payload, timeout: 0.45)
     }
 
     func identity(index: UInt8) -> String? {

@@ -20,6 +20,7 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
-        .testTarget(name: "MisoCoreTests", dependencies: ["MisoCore"])
+        .testTarget(name: "MisoCoreTests", dependencies: ["MisoCore"]),
+        .testTarget(name: "MisoTests", dependencies: ["Miso", "MisoCore"])
     ]
 )
