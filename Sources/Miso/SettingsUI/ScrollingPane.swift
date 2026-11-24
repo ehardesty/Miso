@@ -17,6 +17,7 @@ struct ScrollingPane: View {
                 axis: \.horizontalWheel, overrides: \.horizontalWheel,
                 reverse: \.reverseHorizontal, reverseOverride: \.reverseHorizontal, showsNotes: false
             )
+            if scope == .global { SmoothScrollingSection(model: model) }
         }
         .formStyle(.grouped)
     }

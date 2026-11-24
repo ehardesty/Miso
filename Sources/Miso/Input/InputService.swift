@@ -72,6 +72,9 @@ final class InputService {
     private var systemPaused = false
     private var navigationPID: pid_t?
     private var wheelProbe: WheelProbe?
+    private let smoother = SmoothScroller()
+    /// Main thread only.
+    private var smoothLinkRequested = false
 
     var onStatus: ((InputStatus) -> Void)?
     var onButton: ((MouseButton) -> Void)?
@@ -82,9 +85,20 @@ final class InputService {
     ]
 
     func configure(_ context: InputContext, allowed: Bool, navigationPID: pid_t?) {
+        let smoothing = context.settings.enabled ? context.settings.smoothing : ScrollSmoothing(enabled: false)
+        if smoothing.isOn && !smoothLinkRequested {
+            smoothLinkRequested = true
+            // A display change can leave the old link without frames.
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+            ) { [weak self] _ in self?.rebindSmoothLink() }
+            rebindSmoothLink()
+        }
         thread.enqueue { [self] in
+            smoother.configure(smoothing)
             let contextChanged = self.context != context
             if contextChanged {
+                smoother.stop()
                 wheels.removeAll(keepingCapacity: true)
                 let devices = context.nativeIDs.union(context.vendorIDs)
                 let removed = self.context.nativeIDs.union(self.context.vendorIDs).subtracting(devices)
@@ -103,6 +117,12 @@ final class InputService {
                 refreshTaps()
             }
         }
+    }
+
+    /// Main thread only.
+    private func rebindSmoothLink() {
+        guard let link = SmoothScroller.makeLink(for: smoother) else { return }
+        thread.enqueue { [self] in smoother.attach(link) }
     }
 
     func setNavigationTarget(_ pid: pid_t?) {
@@ -137,6 +157,7 @@ final class InputService {
     func shutdown(_ completion: @escaping () -> Void) {
         thread.enqueue { [self] in
             cancelInteractions()
+            smoother.invalidate()
             allowed = false
             dropTaps()
             DispatchQueue.main.async(execute: completion)
@@ -148,9 +169,10 @@ final class InputService {
         needs = []
         mayNeedMotion = false
         guard context.settings.enabled else { return }
+        let smoothing = context.settings.smoothing.isOn
         for id in context.nativeIDs {
             guard let profile = profiles[id] else { continue }
-            if profile.changesWheel { needs.insert(.wheel) }
+            if profile.changesWheel || smoothing { needs.insert(.wheel) }
             if profile.mappings.contains(where: { mapping in
                 if case .standard = mapping.button { return !mapping.button.isPrimary && mapping.isConfigured }
                 return false
@@ -304,6 +326,7 @@ final class InputService {
     }
 
     private func cancelInteractions() {
+        smoother.stop()
         for key in Array(holds.keys) { cancel(key) }
         discardRecording()
     }
@@ -344,8 +367,7 @@ final class InputService {
 
         switch type {
         case .scrollWheel:
-            transformWheel(event)
-            return event
+            return transformWheel(event) ? nil : event
         case .otherMouseDown:
             guard let key = buttonKey(event, sender: MTEventSender(event)) else { return event }
             let result = press(key, flags: event.flags, location: event.location, native: event)
@@ -517,24 +539,29 @@ final class InputService {
         for event in events { ActionDelivery.post(event) }
     }
 
-    private func transformWheel(_ event: CGEvent) {
-        guard context.settings.enabled else { return }
+    /// Returns true when smooth scrolling consumed the event.
+    private func transformWheel(_ event: CGEvent) -> Bool {
+        guard context.settings.enabled else { return false }
         guard event.getIntegerValueField(.scrollWheelEventScrollPhase) == 0,
               event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else {
             wheelProbe?.record(.gesture)
-            return
+            smoother.cancel(movedBy: event)
+            return false
         }
+        let continuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
+        // Precise scrolling from any device passes through. It ends the glide
+        // on the axes it moves, so a tail never runs against it.
+        if continuous { smoother.cancel(movedBy: event) }
         var rawVertical = 0.0
         var rawHorizontal = 0.0
         var eventTime: UInt64 = 0
         let sender = MTReadScrollDevice(event, &rawVertical, &rawHorizontal, &eventTime)
         guard let device = context.mouseSenders[sender], let profile = profiles[device] else {
             wheelProbe?.record(.unknownMouse)
-            return
+            return false
         }
         let changesWheel = profile.changesWheel
-        guard changesWheel || wheelProbe != nil else { return }
-        let continuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
+        guard changesWheel || wheelProbe != nil || smoother.isActive else { return false }
         let timestamp = eventTime == 0 ? DispatchTime.now().uptimeNanoseconds : eventTime
         let key = WheelKey(sender: sender, continuous: continuous)
         var state = wheels[key] ?? Wheels()
@@ -557,6 +584,7 @@ final class InputService {
             raw: (rawVertical, rawHorizontal),
             rates: (state.vertical.stepsPerSecond, state.horizontal.stepsPerSecond), timestamp: timestamp
         )
+        return !continuous && smoother.consume(event)
     }
 
     private static func transformAxis(

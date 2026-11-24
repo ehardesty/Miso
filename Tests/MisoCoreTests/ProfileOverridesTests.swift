@@ -130,9 +130,9 @@ import Testing
     profile.verticalWheel.mode = .boost
     profile.horizontalWheel.mode = .boost
     for wheel in [profile.verticalWheel, profile.horizontalWheel] {
-        #expect(wheel.wheelRamp == WheelRamp(startRate: 1, fullRate: 110, curve: .quick))
-        #expect(wheel.wheelLinesPerStep(atRate: 1) == 1.5)
-        #expect(wheel.wheelLinesPerStep(atRate: 110) == 6)
+        #expect(wheel.wheelRamp == WheelRamp(startRate: 1, fullRate: 100, curve: .gradual))
+        #expect(wheel.wheelLinesPerStep(atRate: 1) == 1.25)
+        #expect(wheel.wheelLinesPerStep(atRate: 100) == 10)
     }
 }
 

@@ -5,8 +5,13 @@ public struct Settings: Codable, Equatable, Sendable {
     public var global = InputProfile()
     public var deviceProfiles: [String: ProfileOverrides] = [:]
     public var appProfiles: [String: ProfileOverrides] = [:]
+    /// Optional so settings saved before smooth scrolling still decode.
+    public var smoothScrolling: ScrollSmoothing?
 
     public init() {}
+
+    /// The smooth scrolling in effect, including the default when none is saved.
+    public var smoothing: ScrollSmoothing { smoothScrolling ?? ScrollSmoothing() }
 
     public func profile(device: String?, app: String?) -> InputProfile {
         var result = global
@@ -46,8 +51,8 @@ public enum AccelerationMode: String, Codable, CaseIterable, Identifiable, Senda
 public struct AxisSettings: Codable, Equatable, Sendable {
     public static let wheelBoostRange = 1.0...9.0
     static let defaultWheel: Self = {
-        var axis = Self(boost: 3, wheelRamp: WheelRamp(startRate: 1, fullRate: 110, curve: .quick))
-        axis.boostSpeed = 1.5
+        var axis = Self(boost: 7, wheelRamp: WheelRamp(startRate: 1, fullRate: 100, curve: .gradual))
+        axis.boostSpeed = 1.25
         return axis
     }()
 
