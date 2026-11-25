@@ -15,7 +15,7 @@ final class WheelLiveTest: ObservableObject {
     private var idleCheck: DispatchWorkItem?
     private static let idleDelay: UInt64 = 1_200_000_000
 
-    func start(_ axis: QuartzWheelAxis, model: SettingsModel) {
+    func start(_ axis: ScrollAxis, model: SettingsModel) {
         stop(model)
         clearMessage()
         let probe = WheelProbe(axis: axis) { [weak self] source, reading in
@@ -84,7 +84,7 @@ struct WheelTestTarget: View {
     @Environment(\.controlActiveState) private var activeState
     @ObservedObject var model: SettingsModel
     @ObservedObject var live: WheelLiveTest
-    let axis: QuartzWheelAxis
+    let axis: ScrollAxis
     @State private var hovering = false
     private var armed: Bool { hovering && activeState == .key }
 

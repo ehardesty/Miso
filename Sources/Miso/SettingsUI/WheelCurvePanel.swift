@@ -5,7 +5,7 @@ import SwiftUI
 struct WheelCurvePanel: View {
     @ObservedObject var model: SettingsModel
     let scope: SettingsScope
-    let axis: WritableKeyPath<InputProfile, AxisSettings>
+    let axis: ScrollAxis
     @State private var previewID: String?
     @State private var inspectedRate = 38.0
     @StateObject private var live = WheelLiveTest()
@@ -25,7 +25,7 @@ struct WheelCurvePanel: View {
             }
         } header: {
             HStack(alignment: .firstTextBaseline) {
-                Text(probeAxis == .vertical ? "Vertical Wheel Response" : "Horizontal Wheel Response")
+                Text(axis == .vertical ? "Vertical Wheel Response" : "Horizontal Wheel Response")
                 Spacer()
                 if case .app = scope, !model.devices.isEmpty {
                     Picker("Preview with", selection: previewSelection) {
@@ -43,8 +43,6 @@ struct WheelCurvePanel: View {
 
     // MARK: Curve
 
-    private var probeAxis: QuartzWheelAxis { axis == \InputProfile.verticalWheel ? .vertical : .horizontal }
-
     /// The mouse the curve is drawn for. Global scope draws inherited settings for any mouse.
     private var device: String? {
         switch scope {
@@ -60,10 +58,11 @@ struct WheelCurvePanel: View {
     }
 
     private var curve: AxisSettings {
-        switch scope {
-        case .global: model.settings.global[keyPath: axis]
-        case let .device(id): model.settings.profile(device: id, app: nil)[keyPath: axis]
-        case let .app(id): model.settings.profile(device: device, app: id)[keyPath: axis]
+        let settings = axis.profileFields.settings
+        return switch scope {
+        case .global: model.settings.global[keyPath: settings]
+        case let .device(id): model.settings.profile(device: id, app: nil)[keyPath: settings]
+        case let .app(id): model.settings.profile(device: device, app: id)[keyPath: settings]
         }
     }
 
@@ -158,8 +157,8 @@ struct WheelCurvePanel: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if case .unavailable = result {} else {
-                WheelTestTarget(model: model, live: live, axis: probeAxis)
-                    .frame(minWidth: 156, maxWidth: probeAxis == .vertical ? 200 : 260)
+                WheelTestTarget(model: model, live: live, axis: axis)
+                    .frame(minWidth: 156, maxWidth: axis == .vertical ? 200 : 260)
             }
         }
         .padding(.vertical, 2)
@@ -227,7 +226,8 @@ struct WheelCurvePanel: View {
         }
         if let device = last.device, !model.devices.contains(where: { $0.id == device }) { return .waiting }
         let name = last.device.map { model.title(for: .device($0)) } ?? "That mouse"
-        let fit = model.settings.fit(of: last, to: curve, axis: axis, device: device)
+        let settings = axis.profileFields.settings
+        let fit = model.settings.fit(of: last, to: curve, axis: settings, device: device)
         switch fit {
         case .otherMouse: return .message("That scroll came from \(name). This curve is for \(deviceName).")
         case .otherSettings: return .message(mismatchReason(last, name: name))
@@ -237,11 +237,11 @@ struct WheelCurvePanel: View {
         case .continuous, .noSteps:
             return .message("Use Slow scroll distance to adjust how far this mouse scrolls. Live speed and boost need a wheel Miso can measure.")
         case .otherAxis:
-            return .message(probeAxis == .vertical ? "That scroll was horizontal. Use the vertical wheel here."
+            return .message(axis == .vertical ? "That scroll was horizontal. Use the vertical wheel here."
                 : "That scroll was vertical. Use the horizontal wheel or tilt here.")
         case .steps:
             let peak = reading.peak.flatMap {
-                model.settings.fit(of: $0, to: curve, axis: axis, device: device) == fit ? $0.rate : nil
+                model.settings.fit(of: $0, to: curve, axis: settings, device: device) == fit ? $0.rate : nil
             }
             return .reading(last: last.rate, peak: peak, preview: fit == .preview)
         case .gesture, .unknownMouse, .wheelInactive:
@@ -278,7 +278,7 @@ struct WheelCurvePanel: View {
             return "Miso wasn't the active app, so its settings didn't apply. Click Miso's window, then scroll."
         }
         if let device = sample.device, sample.app != nil,
-           model.settings.profile(device: device, app: nil)[keyPath: axis].hasSameWheelResponse(as: curve) {
+           model.settings.profile(device: device, app: nil)[keyPath: axis.profileFields.settings].hasSameWheelResponse(as: curve) {
             return "Miso's own app settings change this wheel while you test here. Choose Miso in the settings menu to test them."
         }
         return "\(name) has its own settings for this wheel. Choose it in the settings menu to test them."

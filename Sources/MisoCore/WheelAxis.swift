@@ -41,12 +41,12 @@ public struct WheelAxis: Sendable {
         let direction = input.sign == .minus ? -1.0 : 1.0
         let acceleration = settings.wheelAccelerationAmount
         let steps = rawUnits.flatMap { $0.isFinite && $0 != 0 ? abs($0) : nil }
-        let custom = acceleration > 0 && !continuous && steps != nil
+        let customSteps = acceleration > 0 && !continuous ? steps : nil
         if direction != lastDirection { lineRemainder = 0 }
         let sign = reversed ? -1.0 : 1.0
         var gain = settings.speedMultiplier * sign
-        if custom, let steps {
-            let rate = updateStepRate(steps: steps, direction: direction, at: timestamp)
+        if let customSteps {
+            let rate = updateStepRate(steps: customSteps, direction: direction, at: timestamp)
             gain = settings.wheelLinesPerStep(atRate: rate) * sign
             lastTimestamp = timestamp
         } else {
@@ -59,7 +59,7 @@ public struct WheelAxis: Sendable {
         }
         lastDirection = direction
 
-        let usesSteps = !continuous && (custom || acceleration < 0)
+        let usesSteps = customSteps != nil || (!continuous && acceleration < 0)
         // HID reports precede macOS natural-scroll direction.
         let units = (steps ?? abs(input)) * direction
         let lines = (usesSteps ? units : input) * gain
@@ -72,7 +72,7 @@ public struct WheelAxis: Sendable {
         let wholeLines = Self.integral(sum)
         // Custom carries fractional lines so apps that read whole lines can
         // approximate the same total distance. Preserve the old modes' minimum.
-        if wholeLines == 0 && !custom {
+        if wholeLines == 0 && customSteps == nil {
             lineRemainder = 0
             return WheelDelta(lines: lines < 0 ? -1 : 1, fixed: fixed, points: points)
         }

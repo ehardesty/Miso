@@ -3,19 +3,6 @@ import Foundation
 import MisoCore
 import os
 
-enum QuartzWheelAxis {
-    case vertical, horizontal
-
-    var fields: (lines: CGEventField, fixed: CGEventField, points: CGEventField) {
-        switch self {
-        case .vertical:
-            (.scrollWheelEventDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventPointDeltaAxis1)
-        case .horizontal:
-            (.scrollWheelEventDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventPointDeltaAxis2)
-        }
-    }
-}
-
 /// Collects one axis of wheel samples on the input thread while the live test
 /// is armed. Main receives the latest reading at most 20 times per second.
 final class WheelProbe: @unchecked Sendable {
@@ -34,12 +21,12 @@ final class WheelProbe: @unchecked Sendable {
     /// A pause this long starts a new pass, well past the runtime's 80 ms rate reset.
     private static let passGap: UInt64 = 500_000_000
 
-    let axis: QuartzWheelAxis
+    let axis: ScrollAxis
     private let deliver: (WheelProbe, Reading) -> Void
     private let state = OSAllocatedUnfairLock(initialState: State())
 
     /// `deliver` runs on the main queue.
-    init(axis: QuartzWheelAxis, deliver: @escaping (WheelProbe, Reading) -> Void) {
+    init(axis: ScrollAxis, deliver: @escaping (WheelProbe, Reading) -> Void) {
         self.axis = axis
         self.deliver = deliver
     }
@@ -69,14 +56,14 @@ final class WheelProbe: @unchecked Sendable {
         }
         let sample = WheelSample(
             input: input, device: device, app: app,
-            settings: vertical ? profile.verticalWheel : profile.horizontalWheel,
+            settings: axis.tuning(in: profile).settings,
             rate: input == .steps ? (vertical ? rates.vertical : rates.horizontal) : 0
         )
         record(sample, at: timestamp)
     }
 
-    private static func moved(_ event: CGEvent, on axis: QuartzWheelAxis) -> Bool {
-        let fields = axis.fields
+    private static func moved(_ event: CGEvent, on axis: ScrollAxis) -> Bool {
+        let fields = axis.eventFields
         return event.getIntegerValueField(fields.lines) != 0 || event.getDoubleValueField(fields.fixed) != 0
             || event.getDoubleValueField(fields.points) != 0
     }

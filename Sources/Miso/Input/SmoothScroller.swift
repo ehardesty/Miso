@@ -12,10 +12,15 @@ final class SmoothScroller: NSObject {
     /// The most pixels one posted event carries.
     private static let maximumStep = 10_000
 
+    private enum ScrollPhase: Int64 {
+        case began = 1, changed = 2, ended = 4, cancelled = 8, mayBegin = 128
+    }
+
     private var settings = ScrollSmoothing()
     private var vertical = SmoothedAxis(glide: ScrollSmoothing.defaultGlide)
     private var horizontal = SmoothedAxis(glide: ScrollSmoothing.defaultGlide)
     private var link: CADisplayLink?
+    private var lastGestureLocation: CGPoint?
     /// A private source with no local-event suppression. Posting from a shared
     /// source by default ignores real mouse movement for 0.25 s after each event.
     private let source: CGEventSource? = {
@@ -31,7 +36,7 @@ final class SmoothScroller: NSObject {
     /// input thread sleeps.
     private var watchdog: Timer?
 
-    var isActive: Bool { settings.isOn && link != nil }
+    var isActive: Bool { settings.enabled && link != nil }
 
     /// Main thread only, because the link comes from an `NSScreen`.
     static func makeLink(for scroller: SmoothScroller) -> CADisplayLink? {
@@ -77,25 +82,24 @@ final class SmoothScroller: NSObject {
     /// link has gone a stall interval without a frame, the rest of the glide
     /// posts at once, so no step is lost. Input then passes through until a
     /// frame proves the link works again.
-    @discardableResult
-    private func expireIfStalled() -> Bool {
+    private func expireIfStalled() {
         guard let link, !link.isPaused, !stalled,
-              CACurrentMediaTime() - lastFrame > Self.stallInterval else { return false }
+              CACurrentMediaTime() - lastFrame > Self.stallInterval else { return }
         post(vertical.flush(), horizontal.flush())
+        finishGesture(.ended)
         stalled = true
         // The link keeps running so a working link can clear the stall.
         watchdog?.invalidate()
         watchdog = nil
-        return true
     }
 
     func configure(_ settings: ScrollSmoothing) {
         guard self.settings != settings else { return }
+        stop()
         self.settings = settings
         stalled = false
         vertical = SmoothedAxis(glide: settings.glide)
         horizontal = SmoothedAxis(glide: settings.glide)
-        setRunning(false)
     }
 
     /// Returns true when the wheel event was consumed.
@@ -115,10 +119,8 @@ final class SmoothScroller: NSObject {
             stop()
             return false
         }
-        let vertical = Self.lines(event, .scrollWheelEventFixedPtDeltaAxis1,
-                                  .scrollWheelEventDeltaAxis1, .scrollWheelEventPointDeltaAxis1)
-        let horizontal = Self.lines(event, .scrollWheelEventFixedPtDeltaAxis2,
-                                    .scrollWheelEventDeltaAxis2, .scrollWheelEventPointDeltaAxis2)
+        let vertical = Self.lines(event, along: .vertical)
+        let horizontal = Self.lines(event, along: .horizontal)
         guard vertical != 0 || horizontal != 0 else { return false }
         self.vertical.add(vertical * ScrollSmoothing.pixelsPerLine, at: now)
         self.horizontal.add(horizontal * ScrollSmoothing.pixelsPerLine, at: now)
@@ -128,23 +130,30 @@ final class SmoothScroller: NSObject {
 
     /// Discards remaining travel at what has already been posted, so the next step starts from what is shown.
     func stop() {
+        finishGesture(.cancelled)
         vertical.stop()
         horizontal.stop()
         setRunning(false)
     }
 
-    /// Ends the glide on each axis the event moves. The other axis keeps its
-    /// pending travel, and the link pauses itself once both have drained.
+    /// Hands off an active gesture to other scrolling input. Unphased glides
+    /// can keep any pending travel on the axis that input did not move.
     func cancel(movedBy event: CGEvent) {
-        if Self.lines(event, .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventDeltaAxis1,
-                      .scrollWheelEventPointDeltaAxis1) != 0 { vertical.stop() }
-        if Self.lines(event, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventDeltaAxis2,
-                      .scrollWheelEventPointDeltaAxis2) != 0 { horizontal.stop() }
+        let movesVertical = Self.lines(event, along: .vertical) != 0
+        let movesHorizontal = Self.lines(event, along: .horizontal) != 0
+        if settings.useGesturePhases {
+            let phase = ScrollPhase(rawValue: event.getIntegerValueField(.scrollWheelEventScrollPhase))
+            if movesVertical || movesHorizontal || phase == .mayBegin || phase == .began {
+                stop()
+                return
+            }
+        }
+        if movesVertical { vertical.stop() }
+        if movesHorizontal { horizontal.stop() }
     }
 
     func invalidate() {
-        watchdog?.invalidate()
-        watchdog = nil
+        stop()
         link?.invalidate()
         link = nil
     }
@@ -159,7 +168,10 @@ final class SmoothScroller: NSObject {
         // never delayed by a refresh-dependent amount.
         let time = link.timestamp
         post(Int(vertical.frame(at: time)), Int(horizontal.frame(at: time)))
-        if vertical.isDrained(at: time) && horizontal.isDrained(at: time) { setRunning(false) }
+        if vertical.isDrained(at: time) && horizontal.isDrained(at: time) {
+            finishGesture(.ended)
+            setRunning(false)
+        }
     }
 
     /// Posts the distance in events of at most `maximumStep` pixels per axis.
@@ -170,21 +182,37 @@ final class SmoothScroller: NSObject {
             let x = max(-Self.maximumStep, min(Self.maximumStep, remaining.1))
             remaining = (remaining.0 - y, remaining.1 - x)
             // New events carry the current cursor location, so the cursor stays free.
-            guard let event = CGEvent(
-                scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2,
-                wheel1: Int32(y), wheel2: Int32(x), wheel3: 0
-            ) else { return }
+            guard let event = makeScrollEvent(y: y, x: x) else { return }
+            if settings.useGesturePhases {
+                let phase: ScrollPhase = lastGestureLocation == nil ? .began : .changed
+                event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase.rawValue)
+                lastGestureLocation = event.location
+            }
             ActionDelivery.post(event)
         }
     }
 
-    /// Line distance, using the same fallbacks as the wheel transform.
-    private static func lines(_ event: CGEvent, _ fixed: CGEventField, _ whole: CGEventField,
-                              _ points: CGEventField) -> Double {
-        let precise = event.getDoubleValueField(fixed)
+    private func finishGesture(_ phase: ScrollPhase) {
+        guard let location = lastGestureLocation else { return }
+        lastGestureLocation = nil
+        guard let event = makeScrollEvent(y: 0, x: 0) else { return }
+        // The pointer can move away before the last frame or a cancellation.
+        event.location = location
+        event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase.rawValue)
+        ActionDelivery.post(event)
+    }
+
+    private func makeScrollEvent(y: Int, x: Int) -> CGEvent? {
+        CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2,
+                wheel1: Int32(y), wheel2: Int32(x), wheel3: 0)
+    }
+
+    private static func lines(_ event: CGEvent, along axis: ScrollAxis) -> Double {
+        let fields = axis.eventFields
+        let precise = event.getDoubleValueField(fields.fixed)
         if precise != 0 { return precise }
-        let lines = event.getIntegerValueField(whole)
+        let lines = event.getIntegerValueField(fields.lines)
         if lines != 0 { return Double(lines) }
-        return event.getDoubleValueField(points) / 10
+        return event.getDoubleValueField(fields.points) / 10
     }
 }

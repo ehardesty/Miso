@@ -47,6 +47,11 @@ final class InputService {
             case .idle, .cancelledPress: false
             }
         }
+
+        var retainsTaps: Bool {
+            if case .idle = self { return false }
+            return true
+        }
     }
 
     private struct Subscription: OptionSet {
@@ -86,7 +91,7 @@ final class InputService {
 
     func configure(_ context: InputContext, allowed: Bool, navigationPID: pid_t?) {
         let smoothing = context.settings.enabled ? context.settings.smoothing : ScrollSmoothing(enabled: false)
-        if smoothing.isOn && !smoothLinkRequested {
+        if smoothing.enabled && !smoothLinkRequested {
             smoothLinkRequested = true
             // A display change can leave the old link without frames.
             NotificationCenter.default.addObserver(
@@ -176,7 +181,7 @@ final class InputService {
         needs = []
         mayNeedMotion = false
         guard context.settings.enabled else { return }
-        let smoothing = context.settings.smoothing.isOn
+        let smoothing = context.settings.smoothing.enabled
         for id in context.nativeIDs {
             guard let profile = profiles[id] else { continue }
             if profile.changesWheel || smoothing { needs.insert(.wheel) }
@@ -260,7 +265,7 @@ final class InputService {
             return false
         }
         var desired = needs
-        if recording.isActive || recording.key != nil || hasNativeHold || navigationNeedsButtons {
+        if recording.retainsTaps || hasNativeHold || navigationNeedsButtons {
             desired.insert(.buttons)
         }
         let observedWheel = subscription.contains(.wheel)
@@ -282,7 +287,7 @@ final class InputService {
         if observedWheel && !subscription.contains(.wheel) {
             wheelProbe?.record(.wheelInactive)
         }
-        if mayNeedMotion || recording.isActive || recording.key != nil || holds.values.contains(where: \.needsMotion) {
+        if mayNeedMotion || recording.retainsTaps || holds.values.contains(where: \.needsMotion) {
             if motionTap == nil {
                 motionTap = QuartzTap(observing: Self.motionTypes, callback: Self.motionCallback, owner: callbackOwner)
                 motionTap?.setEnabled(false)
@@ -586,15 +591,12 @@ final class InputService {
         var state = wheels[key] ?? Wheels()
         if changesWheel {
             Self.transformAxis(
-                event, axis: &state.vertical, settings: profile.verticalWheel,
-                reversed: profile.reverseVertical, continuous: continuous, rawUnits: rawVertical, timestamp: timestamp,
-                fields: QuartzWheelAxis.vertical.fields
+                event, along: .vertical, state: &state.vertical, profile: profile,
+                continuous: continuous, rawUnits: rawVertical, timestamp: timestamp
             )
             Self.transformAxis(
-                event, axis: &state.horizontal, settings: profile.horizontalWheel,
-                reversed: profile.reverseHorizontal, continuous: continuous, rawUnits: rawHorizontal,
-                timestamp: timestamp,
-                fields: QuartzWheelAxis.horizontal.fields
+                event, along: .horizontal, state: &state.horizontal, profile: profile,
+                continuous: continuous, rawUnits: rawHorizontal, timestamp: timestamp
             )
             wheels[key] = state
         }
@@ -607,17 +609,18 @@ final class InputService {
     }
 
     private static func transformAxis(
-        _ event: CGEvent, axis: inout WheelAxis, settings: AxisSettings, reversed: Bool, continuous: Bool,
-        rawUnits: Double, timestamp: UInt64,
-        fields: (lines: CGEventField, fixed: CGEventField, points: CGEventField)
+        _ event: CGEvent, along axis: ScrollAxis, state: inout WheelAxis, profile: InputProfile,
+        continuous: Bool, rawUnits: Double, timestamp: UInt64
     ) {
+        let (settings, reversed) = axis.tuning(in: profile)
         guard settings.changesWheel || reversed else { return }
+        let fields = axis.eventFields
         let old = WheelDelta(
             lines: event.getIntegerValueField(fields.lines),
             fixed: event.getDoubleValueField(fields.fixed),
             points: event.getDoubleValueField(fields.points)
         )
-        let value = axis.transform(
+        let value = state.transform(
             old, settings: settings, reversed: reversed, continuous: continuous,
             timestamp: timestamp, rawUnits: rawUnits
         )

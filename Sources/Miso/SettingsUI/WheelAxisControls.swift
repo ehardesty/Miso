@@ -4,13 +4,13 @@ import SwiftUI
 struct WheelAxisControls: View {
     @ObservedObject var model: SettingsModel
     let scope: SettingsScope
-    let axis: WritableKeyPath<InputProfile, AxisSettings>
-    let overrides: WritableKeyPath<ProfileOverrides, ProfileOverrides.Axis>
+    let axis: ScrollAxis
 
     var body: some View {
-        let modes = model.modes(for: scope, axis: axis)
+        let (settings, overrides, _, _) = axis.profileFields
+        let modes = model.modes(for: scope, axis: settings)
         ProfileControl(
-            model: model, scope: scope, field: axis.appending(path: \.mode),
+            model: model, scope: scope, field: settings.appending(path: \.mode),
             overrideField: overrides.appending(path: \.mode), overrideTitle: "Override Wheel Mode"
         ) { mode in
             Picker("Wheel mode", selection: mode) {
@@ -21,7 +21,7 @@ struct WheelAxisControls: View {
         ForEach(modes) { mode in
             let title = mode == .system && modes.count > 1 ? "macOS speed" : mode.wheelSpeedTitle
             ProfileControl(
-                model: model, scope: scope, field: axis.appending(path: AxisSettings.speedField(for: mode)),
+                model: model, scope: scope, field: settings.appending(path: AxisSettings.speedField(for: mode)),
                 overrideField: overrides.appending(path: ProfileOverrides.Axis.speedField(for: mode)),
                 overrideTitle: "Override \(title)"
             ) { speed in
@@ -38,11 +38,11 @@ struct WheelAxisControls: View {
         }
         if modes.contains(.boost) {
             ProfileControl(
-                model: model, scope: scope, field: axis.appending(path: \.boost),
+                model: model, scope: scope, field: settings.appending(path: \.boost),
                 overrideField: overrides.appending(path: \.boost), overrideTitle: "Override Fast-Scroll Boost"
             ) { WheelBoostControl(boost: $0) }
             ProfileControl(
-                model: model, scope: scope, field: axis.appending(path: \.wheelRamp),
+                model: model, scope: scope, field: settings.appending(path: \.wheelRamp),
                 overrideField: overrides.appending(path: \.wheelRamp), overrideTitle: "Override Wheel Ramp"
             ) { WheelRampControl(ramp: $0) }
         }

@@ -220,11 +220,10 @@ final class LogitechSession: @unchecked Sendable {
     private func release(_ cid: UInt16, deviceID: String, features: LogitechFeatures, index: UInt8) -> Bool {
         guard let baseline = journal.claims(for: deviceID)[cid] else { return true }
         guard let current = features.reporting(cid, index: index) else { return false }
-        if !current.isDiverted {
-            return journal.update(nil, deviceID: deviceID, cid: cid)
+        if current.isDiverted {
+            guard current.flags == baseline.flags | 1, current.target == baseline.target,
+                  features.setDiverted(false, cid: cid, index: index) == baseline else { return false }
         }
-        guard current.flags == baseline.flags | 1, current.target == baseline.target,
-              features.setDiverted(false, cid: cid, index: index) == baseline else { return false }
         return journal.update(nil, deviceID: deviceID, cid: cid)
     }
 

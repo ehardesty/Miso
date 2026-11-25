@@ -9,7 +9,7 @@ public struct ScrollSmoothing: Codable, Equatable, Sendable {
     public static let pixelsPerLine = 40.0
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, glide
+        case enabled, glide, useGesturePhases
         // Fields saved by the earlier prototype builds.
         case model, duration
     }
@@ -17,10 +17,12 @@ public struct ScrollSmoothing: Codable, Equatable, Sendable {
     public var enabled = true
     /// Seconds for one wheel step to glide to rest.
     public var glide = Self.defaultGlide
+    public var useGesturePhases = false
 
-    public init(enabled: Bool = true, glide: Double = Self.defaultGlide) {
+    public init(enabled: Bool = true, glide: Double = Self.defaultGlide, useGesturePhases: Bool = false) {
         self.enabled = enabled
         self.glide = Self.clamp(glide, to: Self.glideRange, default: Self.defaultGlide)
+        self.useGesturePhases = useGesturePhases
     }
 
     /// Each field falls back on its own, so a bad value never resets other settings.
@@ -34,7 +36,8 @@ public struct ScrollSmoothing: Codable, Equatable, Sendable {
         self.init(
             enabled: (try? values.decode(Bool.self, forKey: .enabled)) ?? legacyOn ?? true,
             glide: (try? values.decode(Double.self, forKey: .glide))
-                ?? (try? values.decode(Double.self, forKey: .duration)) ?? Self.defaultGlide
+                ?? (try? values.decode(Double.self, forKey: .duration)) ?? Self.defaultGlide,
+            useGesturePhases: (try? values.decode(Bool.self, forKey: .useGesturePhases)) ?? false
         )
     }
 
@@ -42,13 +45,12 @@ public struct ScrollSmoothing: Codable, Equatable, Sendable {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(enabled, forKey: .enabled)
         try values.encode(glide, forKey: .glide)
+        try values.encode(useGesturePhases, forKey: .useGesturePhases)
     }
 
     private static func clamp(_ value: Double, to range: ClosedRange<Double>, default fallback: Double) -> Double {
         value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : fallback
     }
-
-    public var isOn: Bool { enabled }
 }
 
 /// One axis of smoothed motion. Each wheel step bends the current glide toward

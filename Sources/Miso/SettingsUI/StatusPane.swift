@@ -85,6 +85,7 @@ private struct InputStatusLabel: View {
     let enabled: Bool
 
     var body: some View {
+        let (detail, symbol, tint) = presentation
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Miso").font(.headline)
@@ -98,33 +99,13 @@ private struct InputStatusLabel: View {
         }
     }
 
-    private var detail: String {
-        guard enabled else { return "Off. Your mouse uses macOS defaults." }
+    private var presentation: (String, String, Color) {
+        guard enabled else { return ("Off. Your mouse uses macOS defaults.", "pause.circle.fill", .secondary) }
         switch status {
-        case .listening: return "Active"
-        case .stopped: return "Starting…"
-        case .permissionRequired: return "Waiting for permission"
-        case .unavailable(let reason): return reason
-        }
-    }
-
-    private var symbol: String {
-        guard enabled else { return "pause.circle.fill" }
-        switch status {
-        case .listening: return "checkmark.circle.fill"
-        case .stopped: return "circle.dotted"
-        case .permissionRequired: return "lock.circle.fill"
-        case .unavailable: return "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var tint: Color {
-        guard enabled else { return .secondary }
-        switch status {
-        case .listening: return .green
-        case .stopped: return .secondary
-        case .permissionRequired: return .orange
-        case .unavailable: return .red
+        case .listening: return ("Active", "checkmark.circle.fill", .green)
+        case .stopped: return ("Starting…", "circle.dotted", .secondary)
+        case .permissionRequired: return ("Waiting for permission", "lock.circle.fill", .orange)
+        case let .unavailable(reason): return (reason, "exclamationmark.triangle.fill", .red)
         }
     }
 }

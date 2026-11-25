@@ -49,6 +49,10 @@ struct SmoothScrollingSection: View {
                 Text("Glide")
                 Text("Longer is smoother. Shorter stops sooner when you stop the wheel.")
             }
+            Toggle(isOn: smoothing.useGesturePhases) {
+                Text("Scroll gesture phases")
+                Text("Experimental. Tells apps when a smooth scroll starts and ends.")
+            }
         }
     }
 

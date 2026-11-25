@@ -1,4 +1,3 @@
-import MisoCore
 import SwiftUI
 
 struct ScrollingPane: View {
@@ -8,44 +7,33 @@ struct ScrollingPane: View {
     var body: some View {
         Form {
             SmoothScrollingSection(model: model, scope: scope)
-            WheelSections(
-                model: model, scope: scope, title: "Vertical Wheel", symbol: "arrow.up.and.down",
-                axis: \.verticalWheel, overrides: \.verticalWheel,
-                reverse: \.reverseVertical, reverseOverride: \.reverseVertical, showsNotes: true
-            )
-            WheelSections(
-                model: model, scope: scope, title: "Horizontal Wheel", symbol: "arrow.left.and.right",
-                axis: \.horizontalWheel, overrides: \.horizontalWheel,
-                reverse: \.reverseHorizontal, reverseOverride: \.reverseHorizontal, showsNotes: false
-            )
+            WheelSections(model: model, scope: scope, axis: .vertical)
+            WheelSections(model: model, scope: scope, axis: .horizontal)
         }
         .formStyle(.grouped)
     }
 }
 
-/// A wheel's settings, followed by its Custom response and live test when Custom is in use.
 private struct WheelSections: View {
     @ObservedObject var model: SettingsModel
     let scope: SettingsScope
-    let title: String
-    let symbol: String
-    let axis: WritableKeyPath<InputProfile, AxisSettings>
-    let overrides: WritableKeyPath<ProfileOverrides, ProfileOverrides.Axis>
-    let reverse: WritableKeyPath<InputProfile, Bool>
-    let reverseOverride: WritableKeyPath<ProfileOverrides, Bool?>
-    let showsNotes: Bool
+    let axis: ScrollAxis
 
     var body: some View {
+        let fields = axis.profileFields
         Section {
-            WheelAxisControls(model: model, scope: scope, axis: axis, overrides: overrides)
-            ProfileControl(model: model, scope: scope, field: reverse,
-                           overrideField: reverseOverride, overrideTitle: "Override Direction") {
+            WheelAxisControls(model: model, scope: scope, axis: axis)
+            ProfileControl(model: model, scope: scope, field: fields.reverse,
+                           overrideField: fields.reverseOverride, overrideTitle: "Override Direction") {
                 Toggle("Reverse direction", isOn: $0)
             }
         } header: {
-            Label(title, systemImage: symbol)
+            Label(
+                axis == .vertical ? "Vertical Wheel" : "Horizontal Wheel",
+                systemImage: axis == .vertical ? "arrow.up.and.down" : "arrow.left.and.right"
+            )
         } footer: {
-            if showsNotes {
+            if axis == .vertical {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("In Custom, each notch scrolls the distance you set when you turn the wheel slowly. Turn the wheel faster to scroll farther per notch.")
                         .font(.callout)
@@ -56,8 +44,7 @@ private struct WheelSections: View {
                 .multilineTextAlignment(.leading)
             }
         }
-        if model.modes(for: scope, axis: axis).contains(.boost) {
-            // A separate live test for each wheel and scope.
+        if model.modes(for: scope, axis: fields.settings).contains(.boost) {
             WheelCurvePanel(model: model, scope: scope, axis: axis).id(PanelID(scope: scope, axis: axis))
         }
     }
@@ -65,5 +52,5 @@ private struct WheelSections: View {
 
 private struct PanelID: Hashable {
     let scope: SettingsScope
-    let axis: KeyPath<InputProfile, AxisSettings>
+    let axis: ScrollAxis
 }
