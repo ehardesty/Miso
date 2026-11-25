@@ -11,6 +11,10 @@ uint64_t MTEventSender(CGEventRef event);
 /// The sender recorded in Quartz field 87. Present on some events without an attached IOHIDEvent.
 uint64_t MTEventFieldSender(CGEventRef event);
 uint64_t MTReadScrollDevice(CGEventRef event, double *vertical, double *horizontal, uint64_t *timestampNanoseconds);
+/// The observer and mouse-service snapshots are confined to the main queue.
+typedef void (*MTMouseServicesChanged)(void *_Nullable context);
+void MTStartMouseServiceObservation(MTMouseServicesChanged callback, void *_Nullable context);
+void MTStopMouseServiceObservation(void);
 CFArrayRef _Nullable MTCopyMouseServices(void) CF_RETURNS_RETAINED;
 uint64_t MTServiceRegistryID(CFTypeRef service);
 bool MTRegistryServiceExists(uint64_t id);

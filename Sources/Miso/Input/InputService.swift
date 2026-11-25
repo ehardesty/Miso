@@ -102,8 +102,15 @@ final class InputService {
                 wheels.removeAll(keepingCapacity: true)
                 let devices = context.nativeIDs.union(context.vendorIDs)
                 let removed = self.context.nativeIDs.union(self.context.vendorIDs).subtracting(devices)
-                for key in Array(holds.keys) where removed.contains(key.device) { cancel(key) }
-                if let key = recording.key, removed.contains(key.device) { discardRecording() }
+                let retiredNativeDevices = Set(self.context.mouseSenders.compactMap { sender, device in
+                    context.mouseSenders[sender] == nil ? device : nil
+                })
+                func disconnected(_ key: ButtonKey) -> Bool {
+                    if case .standard = key.button, retiredNativeDevices.contains(key.device) { return true }
+                    return removed.contains(key.device)
+                }
+                for key in Array(holds.keys) where disconnected(key) { cancel(key) }
+                if let key = recording.key, disconnected(key) { discardRecording() }
                 self.context = context
                 rebuildProfiles(devices: devices)
             }

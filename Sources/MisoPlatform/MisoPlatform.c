@@ -82,18 +82,112 @@ uint64_t MTReadScrollDevice(CGEventRef event, double *vertical, double *horizont
     return id;
 }
 
-CFArrayRef MTCopyMouseServices(void) {
+typedef void (^HIDServiceBlock)(void *, void *, IOHIDServiceClientRef);
+typedef void (*RegisterMatching)(IOHIDEventSystemClientRef, HIDServiceBlock, void *, void *);
+typedef void (*RegisterRemoval)(IOHIDServiceClientRef, HIDServiceBlock, void *, void *);
+typedef void (*SetClientQueue)(IOHIDEventSystemClientRef, dispatch_queue_t);
+typedef void (*UnregisterMatching)(IOHIDEventSystemClientRef);
+
+static RegisterRemoval registerRemoval;
+static SetClientQueue unscheduleClient;
+static UnregisterMatching unregisterMatching;
+static MTMouseServicesChanged mouseServicesChanged;
+static void *mouseServicesContext;
+static CFMutableSetRef observedMouseIDs;
+static uint64_t observationGeneration;
+static bool mouseRefreshPending;
+
+static IOHIDEventSystemClientRef mouseServiceClient(void) {
     // Passive clients can read and write pointer properties on USB receivers.
     // Keep the connection alive because those writes are scoped to the client.
     static IOHIDEventSystemClientRef client;
     if (!client) client = IOHIDEventSystemClientCreateWithType(kCFAllocatorDefault, MTHIDClientPassive, NULL);
+    return client;
+}
+
+static bool isMouseService(IOHIDServiceClientRef service) {
+    return IOHIDServiceClientConformsTo(service, kHIDPage_GenericDesktop, kHIDUsage_GD_Mouse);
+}
+
+static void queueMouseServiceRefresh(void) {
+    if (mouseRefreshPending) return;
+    mouseRefreshPending = true;
+    const uint64_t generation = observationGeneration;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (generation != observationGeneration) return;
+        mouseRefreshPending = false;
+        mouseServicesChanged(mouseServicesContext);
+    });
+}
+
+static void observeMouseRemoval(IOHIDServiceClientRef service) {
+    if (!observedMouseIDs) return;
+    CFTypeRef id = IOHIDServiceClientGetRegistryID(service);
+    int64_t value = 0;
+    if (!id || CFGetTypeID(id) != CFNumberGetTypeID() ||
+        !CFNumberGetValue(id, kCFNumberSInt64Type, &value) || value == 0 ||
+        CFSetContainsValue(observedMouseIDs, id)) return;
+
+    CFSetAddValue(observedMouseIDs, id);
+    const uint64_t generation = observationGeneration;
+    registerRemoval(service, ^(void *target, void *refcon, IOHIDServiceClientRef removed) {
+        if (generation != observationGeneration) return;
+        CFNumberRef key = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &value);
+        CFSetRemoveValue(observedMouseIDs, key);
+        CFRelease(key);
+        queueMouseServiceRefresh();
+    }, NULL, NULL);
+}
+
+void MTStartMouseServiceObservation(MTMouseServicesChanged callback, void *context) {
+    if (mouseServicesChanged) return;
+    RegisterMatching registerMatching = (RegisterMatching)dlsym(
+        RTLD_DEFAULT, "IOHIDEventSystemClientRegisterDeviceMatchingBlock");
+    registerRemoval = (RegisterRemoval)dlsym(RTLD_DEFAULT, "IOHIDServiceClientRegisterRemovalBlock");
+    SetClientQueue scheduleClient = (SetClientQueue)dlsym(
+        RTLD_DEFAULT, "IOHIDEventSystemClientScheduleWithDispatchQueue");
+    unscheduleClient = (SetClientQueue)dlsym(RTLD_DEFAULT, "IOHIDEventSystemClientUnscheduleFromDispatchQueue");
+    unregisterMatching = (UnregisterMatching)dlsym(
+        RTLD_DEFAULT, "IOHIDEventSystemClientUnregisterDeviceMatchingBlock");
+    if (!registerMatching || !registerRemoval || !scheduleClient || !unscheduleClient || !unregisterMatching) return;
+
+    IOHIDEventSystemClientRef client = mouseServiceClient();
+    if (!client) return;
+    observedMouseIDs = CFSetCreateMutable(kCFAllocatorDefault, 0, &kCFTypeSetCallBacks);
+    mouseServicesChanged = callback;
+    mouseServicesContext = context;
+    const uint64_t generation = ++observationGeneration;
+    registerMatching(client, ^(void *target, void *refcon, IOHIDServiceClientRef service) {
+        if (generation != observationGeneration || !service || !isMouseService(service)) return;
+        observeMouseRemoval(service);
+        queueMouseServiceRefresh();
+    }, NULL, NULL);
+    scheduleClient(client, dispatch_get_main_queue());
+}
+
+void MTStopMouseServiceObservation(void) {
+    if (!mouseServicesChanged) return;
+    ++observationGeneration;
+    mouseServicesChanged = NULL;
+    mouseServicesContext = NULL;
+    mouseRefreshPending = false;
+    IOHIDEventSystemClientRef client = mouseServiceClient();
+    unregisterMatching(client);
+    unscheduleClient(client, dispatch_get_main_queue());
+    CFRelease(observedMouseIDs);
+    observedMouseIDs = NULL;
+}
+
+CFArrayRef MTCopyMouseServices(void) {
+    IOHIDEventSystemClientRef client = mouseServiceClient();
     if (!client) return NULL;
     CFArrayRef services = IOHIDEventSystemClientCopyServices(client);
     if (!services) return NULL;
     CFMutableArrayRef mice = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
     for (CFIndex i = 0; i < CFArrayGetCount(services); i++) {
         IOHIDServiceClientRef service = (IOHIDServiceClientRef)CFArrayGetValueAtIndex(services, i);
-        if (IOHIDServiceClientConformsTo(service, kHIDPage_GenericDesktop, kHIDUsage_GD_Mouse)) {
+        if (isMouseService(service)) {
+            observeMouseRemoval(service);
             CFArrayAppendValue(mice, service);
         }
     }

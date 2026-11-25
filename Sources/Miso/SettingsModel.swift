@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Combine
 import MisoCore
+import MisoPlatform
 import UniformTypeIdentifiers
 
 enum SettingsScope: Hashable {
@@ -79,6 +80,14 @@ final class SettingsModel: ObservableObject {
             self.scheduleDeviceRefresh()
         }
         observeWorkspace()
+        MTStartMouseServiceObservation({ context in
+            guard let context else { return }
+            MainActor.assumeIsolated {
+                let model = Unmanaged<SettingsModel>.fromOpaque(context).takeUnretainedValue()
+                guard !model.sleeping, !model.terminating else { return }
+                model.refreshMice()
+            }
+        }, Unmanaged.passUnretained(self).toOpaque())
         refreshPermissions()
     }
 
@@ -389,6 +398,7 @@ final class SettingsModel: ObservableObject {
         cleanup.enter()
         logitech.shutdown { cleanup.leave() }
         pointer.restoreAll()
+        MTStopMouseServiceObservation()
         cleanup.notify(queue: .main, execute: completion)
     }
 }
